@@ -1,0 +1,25 @@
+[project]
+name = "ffix-save-tool"
+version = "0.1.0"
+description = "Command-line and TUI save editor for Final Fantasy IX (PS1 memory-card saves and the 2016 Steam/PC/mobile re-release format)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["ffix", "final-fantasy-9", "save-editor"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Environment :: Console :: Curses",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+]
+dependencies = ["pycryptodome>=3.20"]
+
+[project.optional-dependencies]
+tui = ["textual>=8.0.0"]
+gui = ["PySide6-Essentials>=6.5.0"]
+
+[tool.black]
+line-length = 100

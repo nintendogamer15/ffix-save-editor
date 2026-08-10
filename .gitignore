@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+.env
+.vendor/
+
+# Local save files and backups
+*.dat
+!examples/*.dat
+*.sav
+*.mcr
+*.mcd
+*.mcs
+*.ps1
+*.gme
+*.bak
+*.edited.*
+
+# Archives / generated output
+*.zip
+
+# Platform build artifacts (produced by windows/build.bat, linux/build.sh)
+windows/build/
+windows/dist/
+windows/.buildenv/
+linux/build/
+linux/dist/
+linux/AppDir/
+linux/.buildenv/
+linux/.mamba_root/
+linux/micromamba
+linux/appimagetool
+linux/.appimagetool-extracted/
+linux/*.AppImage
+
