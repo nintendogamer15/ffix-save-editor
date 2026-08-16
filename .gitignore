@@ -19,7 +19,12 @@ venv/
 *.ps1
 *.gme
 *.bak
+*.bak.*
 *.edited.*
+
+# Private/local test fixtures (not redistributed)
+examples/Steam/
+examples/ff9save08_Lindblum/
 
 # Archives / generated output
 *.zip
@@ -37,4 +42,3 @@ linux/micromamba
 linux/appimagetool
 linux/.appimagetool-extracted/
 linux/*.AppImage
-

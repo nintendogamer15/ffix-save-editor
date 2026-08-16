@@ -1,7 +1,11 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "ffix-save-tool"
-version = "0.1.0"
-description = "Command-line and TUI save editor for Final Fantasy IX (PS1 memory-card saves and the 2016 Steam/PC/mobile re-release format)."
+version = "0.2.0"
+description = "CLI, TUI, and GUI save editor for Final Fantasy IX legacy, 2016 re-release, and Memoria-mod saves."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -17,9 +21,19 @@ classifiers = [
 ]
 dependencies = ["pycryptodome>=3.20"]
 
+[project.scripts]
+ffix-save-tool = "ffix_save_tool:main"
+ffix-save-tui = "ffix_save_tui:main"
+
+[project.gui-scripts]
+ffix-save-gui = "ffix_save_gui:main"
+
 [project.optional-dependencies]
 tui = ["textual>=8.0.0"]
 gui = ["PySide6-Essentials>=6.5.0"]
+
+[tool.setuptools]
+py-modules = ["ffix_save_data", "ffix_save_gui", "ffix_save_memoria", "ffix_save_tool", "ffix_save_tui"]
 
 [tool.black]
 line-length = 100

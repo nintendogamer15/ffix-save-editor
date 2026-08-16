@@ -361,8 +361,6 @@ class FFIXSaveApp(App):
             current = data.item_name(char.get(key))
             row = Horizontal(Label(label), Input(value=current, id=f"eq_{key}"), classes="stat-row")
             editor.mount(row)
-        if char.fmt == "rr2016":
-            editor.mount(Static("[dim]Equipment offsets for this format are experimental — see NOTICES.md.[/dim]"))
         if char.fmt == "memoria":
             editor.mount(Static("[dim]Strength/Speed/Magic/Spirit are inferred from Memoria's own "
                                  "internal stat names — see NOTICES.md.[/dim]"))
@@ -414,7 +412,7 @@ class FFIXSaveApp(App):
                 self.log_line(f"Not a number: {raw!r}", "yellow")
                 return
             self.slot.gil = amount
-            await self._commit(f"gil set to {amount:,}")
+            await self._commit(f"gil set to {self.slot.gil:,}")
         elif button_id == "add_item_btn":
             token = self.query_one("#add_item_input", Input).value.strip()
             if not token:
@@ -437,7 +435,7 @@ class FFIXSaveApp(App):
         elif button_id == "write_inplace_btn":
             self.push_screen(
                 ConfirmScreen(
-                    f"Overwrite {self.save_path} in place?\nA backup will be written to {self.save_path}.bak first."
+                    f"Overwrite {self.save_path} in place?\nA new numbered .bak backup will be written first."
                 ),
                 self._on_inplace_confirmed,
             )
@@ -445,14 +443,15 @@ class FFIXSaveApp(App):
     def _quantity(self) -> int:
         raw = self.query_one("#quantity_input", Input).value.strip()
         try:
-            return int(raw)
+            return max(0, min(int(raw), 99))
         except ValueError:
             return 99
 
     async def _apply_char_edits(self) -> None:
         if not self.require_slot():
             return
-        char = self.slot.character(self.current_char_index)
+        candidate = self.slot.clone()
+        char = candidate.character(self.current_char_index)
         try:
             char.name = self.query_one("#f_name", Input).value
             for key, _label in STAT_FIELDS:
@@ -474,6 +473,7 @@ class FFIXSaveApp(App):
         except ValueError as exc:
             self.log_line(f"error: {exc}", "bold red")
             return
+        self.slot = candidate
         await self._commit(f"applied edits to {char.name or char.index}")
 
     async def _apply_support_abilities(self) -> None:
@@ -509,8 +509,8 @@ class FFIXSaveApp(App):
             self.log_line("No output path and no loaded file path to derive one from.", "bold red")
             return
         try:
-            out_path.write_bytes(self.doc.to_bytes())
-        except OSError as exc:
+            tool.write_new_document(self.doc, out_path, input_path=self.save_path)
+        except (OSError, ValueError) as exc:
             self.log_line(f"Could not write {out_path}: {exc}", "bold red")
             return
         self.log_line(f"wrote: {out_path}", "bold green")
@@ -518,11 +518,9 @@ class FFIXSaveApp(App):
     def _on_inplace_confirmed(self, confirmed: bool | None) -> None:
         if not confirmed or self.doc is None or self.save_path is None:
             return
-        backup = self.save_path.with_suffix(self.save_path.suffix + ".bak")
         try:
-            backup.write_bytes(self.save_path.read_bytes())
-            self.save_path.write_bytes(self.doc.to_bytes())
-        except OSError as exc:
+            backup = tool.write_document_in_place(self.doc, self.save_path)
+        except (OSError, ValueError) as exc:
             self.log_line(f"In-place write failed: {exc}", "bold red")
             return
         self.log_line(f"wrote in-place; backup: {backup}", "bold green")

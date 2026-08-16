@@ -3,7 +3,7 @@
 """
 Command-line SAVE editor and inspector for Final Fantasy IX.
 
-Supports two on-disk formats:
+Supports three on-disk formats:
 
   legacy   PS1-era save data: a single 8192-byte block (raw, or wrapped in a
            128-byte header for .mcs/.ps1 files), or a full 131072-byte
@@ -14,9 +14,11 @@ Supports two on-disk formats:
            re-release (.dat on PC, .sav on iOS/Android). Holds up to 9 save
            "slots" x 15 files each, all inside one file.
 
-All offsets and the underlying save layouts were reverse-engineered by the
-"Memoria" FF9 save editor project (Gjoerulv); see NOTICES.md for details and
-for which parts of the rr2016 layout are best-effort/experimental.
+  memoria  The unencrypted, tagged-tree format written by the Memoria mod.
+
+The legacy and rr2016 layouts were reverse-engineered by the "Memoria" FF9
+save editor project (Gjoerulv); see NOTICES.md for attribution and validation
+details. The separate Memoria-mod format was derived from real files.
 
 This file has no UI code. ffix_save_tui.py imports from it directly so the
 CLI and TUI can never drift apart.
@@ -25,9 +27,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
+import stat
 import struct
 import sys
-from dataclasses import dataclass, field
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 from Crypto.Cipher import AES
@@ -110,8 +115,9 @@ LEGACY_CARD_SIZE = 0x20000
 LEGACY_REGION_CODE_OFFSET = 0xA
 LEGACY_MAX_BLOCKS = 16  # block 0 is the directory; save data lives in blocks 1-15
 
-LEGACY_GIL_OFFSET = FieldSpec(0x130, 3)
-LEGACY_PLAYTIME_OFFSET = FieldSpec(0x12C, 4)  # tenths of a second
+LEGACY_PREVIEW_GIL_OFFSET = FieldSpec(0x130, 3)
+LEGACY_GIL_OFFSET = FieldSpec(0xEE8, 4)
+LEGACY_PLAYTIME_OFFSET = FieldSpec(0x12C, 4)  # video frames (50 Hz PAL / 60 Hz NTSC)
 LEGACY_LOCATION_OFFSET = 0x110
 LEGACY_LOCATION_LEN = 28
 LEGACY_LEADER_NAME_OFFSET = 0x106
@@ -173,6 +179,19 @@ LEGACY_CARD_COUNT = 105
 LEGACY_CARD_LAYOUT = (0, 1, 2, 3, 4, 5)
 
 EQUIP_SLOT_NAMES = ("weapon", "head", "arm", "armor", "accessory")
+MAX_GIL = 9_999_999
+
+# Product/disc codes stored in PS1 memory-card directory frames. The final
+# "-NN" portion is the save number and is checked separately.
+LEGACY_FFIX_DISC_CODES = frozenset(
+    [f"BASLUS-{disc}00000" for disc in ("01251", "01295", "01296", "01297")]
+    + [f"BISLPS-{disc}00000" for disc in ("02000", "02001", "02002", "02003")]
+    + [
+        f"BESLES-{disc}{language}00000"
+        for disc in ("0", "1", "2", "3")
+        for language in ("2965", "2966", "2967", "2968", "2969")
+    ]
+)
 
 
 # --------------------------------------------------------------------------- rr2016: layout constants
@@ -193,15 +212,15 @@ RR_CARD_RECORD_SIZE = 11
 RR_CARD_COUNT = 100
 # (type, arrows, attack, attack_type, p_def, m_def) byte offsets within an 11-byte record
 RR_CARD_LAYOUT = (3, 0, 1, 7, 5, 4)
-RR_CARD_WINS_OFFSET = FieldSpec(0x1467, 2)
+RR_CARD_DRAWS_OFFSET = FieldSpec(0x1467, 2)
 RR_CARD_LOSSES_OFFSET = FieldSpec(0x1469, 2)
-RR_CARD_DRAWS_OFFSET = FieldSpec(0x146B, 2)
+RR_CARD_WINS_OFFSET = FieldSpec(0x146B, 2)
 
 RR_CHAR_SECTION_START = 0x1677
 RR_CHAR_BLOCK_SIZE = 0xF4
 RR_CHAR_COUNT = 9
 RR_CHAR_NAME_OFFSET = 0x39
-RR_CHAR_NAME_LEN = 9
+RR_CHAR_NAME_LEN = 8
 
 RR_CHAR_FIELDS: dict[str, FieldSpec] = {
     "speed_base": FieldSpec(0x00, 1),
@@ -220,8 +239,7 @@ RR_CHAR_FIELDS: dict[str, FieldSpec] = {
     "magic_bonus": FieldSpec(0x1E, 1),
     "strength_bonus": FieldSpec(0x1F, 1),
     "spirit_bonus": FieldSpec(0x20, 1),
-    # Equip slot order/width below CHARACTER_1_EQUIP_START_OFFSET_RR is inferred
-    # from the legacy layout, not directly confirmed. See NOTICES.md.
+    # Confirmed by the reference editor's live control mappings and real saves.
     "weapon": FieldSpec(0x21, 1),
     "head": FieldSpec(0x22, 1),
     "arm": FieldSpec(0x23, 1),
@@ -229,22 +247,25 @@ RR_CHAR_FIELDS: dict[str, FieldSpec] = {
     "accessory": FieldSpec(0x25, 1),
     "exp": FieldSpec(0x26, 4),
     "magic_stones": FieldSpec(0x34, 1),
-    "max_hp_bonus": FieldSpec(0x35, 2),
-    "max_mp_bonus": FieldSpec(0x37, 2),
+    "max_hp": FieldSpec(0x35, 2),
+    "max_mp": FieldSpec(0x37, 2),
     "level": FieldSpec(0x30, 1),
 }
-RR_EXPERIMENTAL_FIELDS = frozenset(EQUIP_SLOT_NAMES)
 
 RR_PARTY_OFFSET = 0x1F4B
 RR_PARTY_SLOTS = 4
 RR_PLAYTIME_OFFSET = 0x3832  # 8-byte float64, seconds
+RR_SLOT_PLAINTEXT_SIZE = 0x4632
+RR_OCCUPIED_HEADER = b"SAVE"
+RR_EMPTY_HEADER = b"NONE"
 
 
 def _rr_aes_key_iv() -> tuple[bytes, bytes]:
-    password = (
-        "67434cd0-1ca3-11e5-9a21-1697f925ec7b"
-        "7a5313a0-1ca3-11e5-b939-0800200c9a66"
-    ).encode("utf-8")
+    # The reference program appends two UUIDs to a .NET SecureString, then
+    # mistakenly calls SecureString.ToString(). That method returns this type
+    # name rather than the protected contents. Vanilla saves therefore use
+    # this literal string as the PBKDF2 password.
+    password = b"System.Security.SecureString"
     salt = bytes([3, 3, 1, 4, 7, 0, 9, 7])
     derived = hashlib.pbkdf2_hmac("sha1", password, salt, 1000, dklen=48)
     return derived[:32], derived[32:48]
@@ -300,7 +321,7 @@ def rr_parse_metadata(container: bytes) -> RRMetadata:
      is_finish, selected_lang, _is_auto_login, _achievements, _rotation) = struct.unpack_from(
         "<fiiidiibBB", plain, 4
     )
-    return RRMetadata(
+    metadata = RRMetadata(
         save_version=save_version,
         data_size=data_size,
         latest_slot=latest_slot,
@@ -309,9 +330,19 @@ def rr_parse_metadata(container: bytes) -> RRMetadata:
         is_game_finished=bool(is_finish),
         selected_language=selected_lang,
     )
+    if metadata.slot_plain_size != RR_SLOT_PLAINTEXT_SIZE:
+        raise ValueError(
+            "Unsupported rr2016 slot size in metadata: "
+            f"{metadata.slot_plain_size:,} bytes (expected {RR_SLOT_PLAINTEXT_SIZE:,})"
+        )
+    return metadata
 
 
 def rr_chunk_offset(slot_id: int, save_id: int) -> int:
+    if not (0 <= slot_id < RR_MAX_SLOTS):
+        raise ValueError(f"rr2016 slot must be 1-{RR_MAX_SLOTS}, got {slot_id + 1}")
+    if not (0 <= save_id < RR_MAX_SAVES):
+        raise ValueError(f"rr2016 file must be 1-{RR_MAX_SAVES}, got {save_id + 1}")
     return RR_CHUNK_BASE + RR_CHUNK_SIZE * (1 + slot_id * RR_MAX_SAVES + save_id)
 
 
@@ -416,9 +447,10 @@ class Slot:
     """The full, editable byte range for a single FFIX save (one memory-card
     block for legacy saves, or one decrypted (slot, save) pair for rr2016)."""
 
-    def __init__(self, buf: bytearray, fmt: str) -> None:
+    def __init__(self, buf: bytearray, fmt: str, *, legacy_framerate: int = 60) -> None:
         self.buf = buf
         self.fmt = fmt
+        self.legacy_framerate = legacy_framerate
         if fmt == "legacy":
             self._char_start = LEGACY_CHAR_SECTION_START
             self._char_size = LEGACY_CHAR_BLOCK_SIZE
@@ -439,6 +471,9 @@ class Slot:
             self._card_record_size = RR_CARD_RECORD_SIZE
             self._card_count = RR_CARD_COUNT
             self._card_layout = RR_CARD_LAYOUT
+
+    def clone(self) -> Slot:
+        return Slot(bytearray(self.buf), self.fmt, legacy_framerate=self.legacy_framerate)
 
     # -- characters ---------------------------------------------------------
 
@@ -507,8 +542,14 @@ class Slot:
 
     @gil.setter
     def gil(self, value: int) -> None:
-        spec = LEGACY_GIL_OFFSET if self.fmt == "legacy" else RR_GIL_OFFSET
-        set_field(self.buf, 0, spec, min(value, 99999999))
+        value = max(0, min(int(value), MAX_GIL))
+        if self.fmt == "legacy":
+            # FFIX stores a gameplay value and a second copy used by the PS1
+            # memory-card preview. Keep both in sync.
+            set_field(self.buf, 0, LEGACY_GIL_OFFSET, value)
+            set_field(self.buf, 0, LEGACY_PREVIEW_GIL_OFFSET, value)
+            return
+        set_field(self.buf, 0, RR_GIL_OFFSET, value)
 
     @property
     def leader_name(self) -> str:
@@ -530,8 +571,8 @@ class Slot:
     @property
     def playtime_seconds(self) -> float:
         if self.fmt == "legacy":
-            ticks = get_field(self.buf, 0, LEGACY_PLAYTIME_OFFSET)
-            return ticks / 10.0
+            frames = get_field(self.buf, 0, LEGACY_PLAYTIME_OFFSET)
+            return frames / self.legacy_framerate
         return struct.unpack_from("<d", self.buf, RR_PLAYTIME_OFFSET)[0]
 
     def party_member_ids(self) -> list[int] | None:
@@ -564,14 +605,16 @@ class Slot:
 
     def set_card(self, index: int, *, type_id: int, arrows: int = 0, attack: int = 0,
                  attack_type: int = 0, p_def: int = 0, m_def: int = 0) -> None:
+        if not (0 <= index < self._card_count):
+            raise IndexError(f"card index out of range 0-{self._card_count - 1}: {index}")
         base = self._card_start + index * self._card_record_size
         type_off, arrows_off, attack_off, atktype_off, pdef_off, mdef_off = self._card_layout
         self.buf[base + type_off] = type_id & 0xFF
         self.buf[base + arrows_off] = arrows & 0xFF
-        self.buf[base + attack_off] = min(attack, 0xFF)
+        self.buf[base + attack_off] = max(0, min(attack, 0xFF))
         self.buf[base + atktype_off] = attack_type & 0x03
-        self.buf[base + pdef_off] = min(p_def, 0xFF)
-        self.buf[base + mdef_off] = min(m_def, 0xFF)
+        self.buf[base + pdef_off] = max(0, min(p_def, 0xFF))
+        self.buf[base + mdef_off] = max(0, min(m_def, 0xFF))
 
     def card_record_stats(self) -> tuple[int, int, int]:
         wins_spec = LEGACY_CARD_WINS_OFFSET if self.fmt == "legacy" else RR_CARD_WINS_OFFSET
@@ -603,6 +646,7 @@ class SlotRef:
     block_index: int | None = None
     slot_id: int | None = None
     save_id: int | None = None
+    legacy_framerate: int | None = None
 
 
 class Document:
@@ -631,6 +675,27 @@ class Document:
         block = self.raw[self._legacy_block_slice(block_index)]
         return not any(block)  # never-written / zero-filled block (common in raw dumps)
 
+    def _legacy_block_is_ffix(self, block_index: int) -> bool:
+        header_off = LEGACY_BLOCK_HEADER_SIZE * block_index
+        header = bytes(self.raw[header_off:header_off + LEGACY_BLOCK_HEADER_SIZE])
+        if len(header) != LEGACY_BLOCK_HEADER_SIZE or header[0] != 0x51:
+            return False
+        product = header[LEGACY_REGION_CODE_OFFSET:LEGACY_REGION_CODE_OFFSET + 20]
+        return (
+            product[:17].decode("ascii", errors="ignore") in LEGACY_FFIX_DISC_CODES
+            and product[17:18] == b"-"
+            and product[18:20].isdigit()
+        )
+
+    def _legacy_block_framerate(self, block_index: int | None) -> int:
+        if block_index is None:
+            header = self.header
+        else:
+            start = LEGACY_BLOCK_HEADER_SIZE * block_index
+            header = bytes(self.raw[start:start + LEGACY_BLOCK_HEADER_SIZE])
+        product = header[LEGACY_REGION_CODE_OFFSET:LEGACY_REGION_CODE_OFFSET + 7]
+        return 50 if product == b"BESLES-" else 60
+
     def list_slots(self) -> list[SlotRef]:
         """Universal slot listing, valid for every format this Document might
         hold. Front-ends should always call this rather than the
@@ -648,13 +713,33 @@ class Document:
             for block_index in range(1, LEGACY_MAX_BLOCKS):
                 if self._legacy_block_looks_empty(block_index):
                     continue
+                if not self._legacy_block_is_ffix(block_index):
+                    continue
                 block = bytes(self.raw[self._legacy_block_slice(block_index)])
-                refs.append(self._legacy_slot_ref(block_index, block))
+                refs.append(
+                    self._legacy_slot_ref(
+                        block_index,
+                        block,
+                        legacy_framerate=self._legacy_block_framerate(block_index),
+                    )
+                )
             return refs
         block = bytes(self.raw[:LEGACY_BLOCK_SIZE])
-        return [self._legacy_slot_ref(None, block)]
+        return [
+            self._legacy_slot_ref(
+                None,
+                block,
+                legacy_framerate=self._legacy_block_framerate(None),
+            )
+        ]
 
-    def _legacy_slot_ref(self, block_index: int | None, block: bytes) -> SlotRef:
+    def _legacy_slot_ref(
+        self,
+        block_index: int | None,
+        block: bytes,
+        *,
+        legacy_framerate: int,
+    ) -> SlotRef:
         leader = data.decode_legacy_text(block[LEGACY_LEADER_NAME_OFFSET:LEGACY_LEADER_NAME_OFFSET + LEGACY_LEADER_NAME_LEN])
         level = block[LEGACY_LEADER_LEVEL_OFFSET]
         location = data.decode_legacy_text(block[LEGACY_LOCATION_OFFSET:LEGACY_LOCATION_OFFSET + LEGACY_LOCATION_LEN])
@@ -662,7 +747,16 @@ class Document:
         ok = stored == legacy_checksum(block)
         label = f"Block {block_index}" if block_index is not None else "Save data"
         summary = f"{leader or '?'} Lv{level}  {location}".strip()
-        return SlotRef(fmt="legacy", label=label, occupied=True, summary=summary, block_index=block_index)
+        if not ok:
+            summary += "  [checksum mismatch]"
+        return SlotRef(
+            fmt="legacy",
+            label=label,
+            occupied=True,
+            summary=summary,
+            block_index=block_index,
+            legacy_framerate=legacy_framerate,
+        )
 
     def _memoria_slot_ref(self) -> SlotRef:
         assert self.memoria_slot is not None
@@ -676,10 +770,10 @@ class Document:
                 block = bytearray(self.raw)
             else:
                 block = bytearray(self.raw[self._legacy_block_slice(ref.block_index)])
-            return Slot(block, "legacy")
+            return Slot(block, "legacy", legacy_framerate=ref.legacy_framerate or 60)
         if ref.fmt == "memoria":
             assert self.memoria_slot is not None
-            return self.memoria_slot
+            return self.memoria_slot.clone()
         return self._rr_load(ref.slot_id, ref.save_id)
 
     def commit_slot(self, ref: SlotRef, slot: Slot | memoria.MemoriaSlot) -> None:
@@ -692,7 +786,10 @@ class Document:
                 self.raw[sl] = slot.buf
             return
         if ref.fmt == "memoria":
-            return  # MemoriaSlot wraps the live tree; edits already apply in place
+            if not isinstance(slot, memoria.MemoriaSlot):
+                raise TypeError("expected a MemoriaSlot")
+            self.memoria_slot = slot.clone()
+            return
         self._rr_commit(ref.slot_id, ref.save_id, slot)
 
     # -- rr2016 ---------------------------------------------------------------
@@ -702,11 +799,17 @@ class Document:
         start = rr_chunk_offset(slot_id, save_id)
         cipher_len = rr_cipher_size(self.meta.slot_plain_size)
         ciphertext = bytes(self.raw[start:start + cipher_len])
+        if len(ciphertext) != cipher_len:
+            raise ValueError("rr2016 slot extends beyond the end of the container")
         plaintext = rr_decrypt(ciphertext)
+        if len(plaintext) != self.meta.slot_plain_size or plaintext[:4] != RR_OCCUPIED_HEADER:
+            raise ValueError(f"Slot {slot_id + 1} / File {save_id + 1} is empty or invalid")
         return Slot(bytearray(plaintext), "rr2016")
 
     def _rr_commit(self, slot_id: int, save_id: int, slot: Slot) -> None:
         assert self.meta is not None
+        if len(slot.buf) != self.meta.slot_plain_size or slot.buf[:4] != RR_OCCUPIED_HEADER:
+            raise ValueError("refusing to write an invalid rr2016 slot")
         ciphertext = rr_encrypt(bytes(slot.buf))
         start = rr_chunk_offset(slot_id, save_id)
         self.raw[start:start + len(ciphertext)] = ciphertext
@@ -724,9 +827,12 @@ class Document:
             return None
         if len(plaintext) != self.meta.slot_plain_size:
             return None
+        if plaintext[:4] == RR_EMPTY_HEADER:
+            return None
+        if plaintext[:4] != RR_OCCUPIED_HEADER:
+            return None
         slot = Slot(bytearray(plaintext), "rr2016")
         leader = slot.leader_name
-        location = ""
         summary = f"{leader or '(no party)'}".strip()
         label = f"Slot {slot_id + 1} / File {save_id + 1}"
         return SlotRef(fmt="rr2016", label=label, occupied=True, summary=summary,
@@ -796,10 +902,11 @@ def detect_format(path: Path, raw: bytes) -> str:
             "around from here - please double check which file the game "
             "itself loads as your save."
         )
-    if ext in LEGACY_MCR_EXTS:
-        return "legacy_mcr"
-    if ext in LEGACY_SIMPLE_EXTS:
-        return "legacy_simple"
+    if ext in LEGACY_MCR_EXTS | LEGACY_SIMPLE_EXTS:
+        raise ValueError(
+            f"{path.name} has a legacy memory-card extension but is {size:,} bytes. "
+            "Expected exactly 8,192, 8,320, or 131,072 bytes."
+        )
     raise ValueError(
         f"Unrecognized save file: {size:,} bytes, extension {ext!r}. "
         "Expected a PS1 memory-card save (8192 / 8320 / 131072 bytes) or an "
@@ -819,7 +926,13 @@ def open_document(path: Path) -> Document:
         return Document("memoria", bytearray(), memoria_slot=memoria.MemoriaSlot(tree))
     if kind == "legacy_simple":
         header, body = raw[:LEGACY_BLOCK_HEADER_SIZE], raw[LEGACY_BLOCK_HEADER_SIZE:]
+        if body[:2] != b"SC":
+            raise ValueError("Legacy save-data block is missing the PS1 'SC' header")
         return Document("legacy", bytearray(body), header=header)
+    if kind == "legacy_raw" and raw[:2] != b"SC":
+        raise ValueError("Legacy save-data block is missing the PS1 'SC' header")
+    if kind == "legacy_mcr" and raw[:2] != b"MC":
+        raise ValueError("Memory-card image is missing the PS1 'MC' header")
     return Document("legacy", bytearray(raw))
 
 
@@ -829,6 +942,63 @@ def format_label(fmt: str) -> str:
         "rr2016": "Steam/PC/mobile (2016) save",
         "memoria": "Memoria mod save (unencrypted)",
     }.get(fmt, fmt)
+
+
+# --------------------------------------------------------------------------- safe file output
+
+def _same_path(first: Path, second: Path) -> bool:
+    try:
+        return first.samefile(second)
+    except (FileNotFoundError, OSError):
+        return first.resolve() == second.resolve()
+
+
+def atomic_write_bytes(path: Path, contents: bytes) -> None:
+    """Write a complete file beside its destination, then atomically replace it."""
+    path = Path(path)
+    parent = path.parent
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=parent)
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(contents)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if path.exists():
+            os.chmod(temp_path, stat.S_IMODE(path.stat().st_mode))
+        os.replace(temp_path, path)
+    except BaseException:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def write_new_document(doc: Document, out_path: Path, *, input_path: Path | None = None) -> None:
+    if input_path is not None and _same_path(out_path, input_path):
+        raise ValueError("output path is the input file; use in-place writing so a backup is created")
+    atomic_write_bytes(out_path, doc.to_bytes())
+
+
+def _available_backup_path(path: Path) -> Path:
+    first = path.with_suffix(path.suffix + ".bak")
+    if not first.exists():
+        return first
+    index = 1
+    while True:
+        candidate = path.with_suffix(path.suffix + f".bak.{index}")
+        if not candidate.exists():
+            return candidate
+        index += 1
+
+
+def write_document_in_place(doc: Document, input_path: Path) -> Path:
+    original = input_path.read_bytes()
+    backup = _available_backup_path(input_path)
+    atomic_write_bytes(backup, original)
+    atomic_write_bytes(input_path, doc.to_bytes())
+    return backup
 
 
 # --------------------------------------------------------------------------- high level operations
@@ -936,12 +1106,28 @@ def _select_ref(doc: Document, args: argparse.Namespace) -> SlotRef:
     return slots[0]
 
 
+def _bounded_int(label: str, minimum: int, maximum: int):
+    def parse(value: str) -> int:
+        try:
+            number = int(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(f"{label} must be an integer") from exc
+        if not (minimum <= number <= maximum):
+            raise argparse.ArgumentTypeError(f"{label} must be {minimum}-{maximum}")
+        return number
+
+    return parse
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Final Fantasy IX save editor (legacy PS1 + rr2016 Steam/PC/mobile).")
-    p.add_argument("path", type=Path, help="save file to open")
-    p.add_argument("--slot", type=int, metavar="N", help="rr2016: slot number (1-9)")
-    p.add_argument("--save", type=int, metavar="N", help="rr2016: file number within the slot (1-15)")
-    p.add_argument("--block", type=int, metavar="N", help="legacy .mcr: memory-card block number (1-15)")
+    p.add_argument("path", nargs="?", type=Path, help="save file to open")
+    p.add_argument("--slot", type=_bounded_int("slot", 1, RR_MAX_SLOTS), metavar="N",
+                   help="rr2016: slot number (1-9)")
+    p.add_argument("--save", type=_bounded_int("file", 1, RR_MAX_SAVES), metavar="N",
+                   help="rr2016: file number within the slot (1-15)")
+    p.add_argument("--block", type=_bounded_int("block", 1, LEGACY_MAX_BLOCKS - 1), metavar="N",
+                   help="legacy .mcr: memory-card block number (1-15)")
 
     p.add_argument("--inspect", action="store_true", help="print a summary and exit")
     p.add_argument("--list-slots", action="store_true", help="list all occupied slots and exit")
@@ -957,13 +1143,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--give-all-items", action="store_true", help="add every known item/piece of gear")
     p.add_argument("--quantity", type=int, default=99, metavar="N", help="quantity for --give-item / --give-all-items")
 
-    p.add_argument("--out", type=Path, metavar="PATH", help="write the edited save to a new file")
-    p.add_argument("--in-place", action="store_true", help="overwrite the input file (writes a .bak backup first)")
+    output = p.add_mutually_exclusive_group()
+    output.add_argument("--out", type=Path, metavar="PATH", help="write the edited save to a new file")
+    output.add_argument("--in-place", action="store_true",
+                        help="overwrite the input file (writes a numbered .bak backup first)")
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_arg_parser().parse_args(argv)
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
 
     if args.list_known is not None:
         needle = args.list_known.lower()
@@ -973,6 +1162,9 @@ def main(argv: list[str] | None = None) -> int:
             if needle in name.lower():
                 print(f"0x{item_id:02X}  {name}")
         return 0
+
+    if args.path is None:
+        parser.error("path is required unless --list-known is used")
 
     try:
         doc = open_document(args.path)
@@ -990,35 +1182,39 @@ def main(argv: list[str] | None = None) -> int:
         cmd_inspect(doc, ref)
         return 0
 
-    slot = doc.load_slot(ref)
-    changed = []
+    try:
+        slot = doc.load_slot(ref)
+        changed = []
 
-    if args.max_character:
-        char = resolve_character(slot, args.character) if args.character else None
-        if char is None:
-            raise SystemExit("--max-character requires --character NAME_OR_INDEX")
-        char.max_out()
-        changed.append(f"maxed {char.name or char.index}")
+        if args.max_character:
+            char = resolve_character(slot, args.character) if args.character else None
+            if char is None:
+                raise ValueError("--max-character requires --character NAME_OR_INDEX")
+            char.max_out()
+            changed.append(f"maxed {char.name or char.index}")
 
-    if args.max_all:
-        n = 0
-        for char in slot.characters():
-            if char.is_recruited:
-                char.max_out()
-                n += 1
-        changed.append(f"maxed {n} character(s)")
+        if args.max_all:
+            n = 0
+            for char in slot.characters():
+                if char.is_recruited:
+                    char.max_out()
+                    n += 1
+            changed.append(f"maxed {n} character(s)")
 
-    if args.set_gil is not None:
-        slot.gil = args.set_gil
-        changed.append(f"gil={args.set_gil}")
+        if args.set_gil is not None:
+            slot.gil = args.set_gil
+            changed.append(f"gil={slot.gil}")
 
-    for token in args.give_item:
-        item_id, ok = give_item(slot, token, args.quantity)
-        changed.append(f"gave {data.item_name(item_id)} x{args.quantity}" + ("" if ok else " (inventory full!)"))
+        quantity = max(0, min(args.quantity, 99))
+        for token in args.give_item:
+            item_id, ok = give_item(slot, token, quantity)
+            changed.append(f"gave {data.item_name(item_id)} x{quantity}" + ("" if ok else " (inventory full!)"))
 
-    if args.give_all_items:
-        n = give_all_items(slot, args.quantity)
-        changed.append(f"gave {n} items/gear pieces")
+        if args.give_all_items:
+            n = give_all_items(slot, quantity)
+            changed.append(f"gave {n} items/gear pieces")
+    except (IndexError, KeyError, TypeError, ValueError) as exc:
+        raise SystemExit(f"Could not edit {ref.label}: {exc}") from None
 
     if not changed:
         cmd_inspect(doc, ref)
@@ -1028,16 +1224,17 @@ def main(argv: list[str] | None = None) -> int:
     for line in changed:
         print(line)
 
-    if args.out:
-        args.out.write_bytes(doc.to_bytes())
-        print(f"wrote: {args.out}")
-    elif args.in_place:
-        backup = args.path.with_suffix(args.path.suffix + ".bak")
-        backup.write_bytes(args.path.read_bytes())
-        args.path.write_bytes(doc.to_bytes())
-        print(f"wrote in-place; backup: {backup}")
-    else:
-        print("(no --out/--in-place given; nothing written to disk)")
+    try:
+        if args.out:
+            write_new_document(doc, args.out, input_path=args.path)
+            print(f"wrote: {args.out}")
+        elif args.in_place:
+            backup = write_document_in_place(doc, args.path)
+            print(f"wrote in-place; backup: {backup}")
+        else:
+            print("(no --out/--in-place given; nothing written to disk)")
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"Could not write save: {exc}") from None
     return 0
 
 

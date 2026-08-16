@@ -24,7 +24,10 @@ Specifically derived from that project's analysis:
   `SelectSave.cs::SetChecksum` and `Crc/Crc16.cs`.
 - The AES-256-CBC / PBKDF2-HMAC-SHA1 key derivation, salt, and container
   layout for the 2016 Steam/PC/mobile re-release format, from
-  `Crc/AESCryptography.cs` and `ReUtils/DataManager.cs`.
+  `Crc/AESCryptography.cs` and `ReUtils/DataManager.cs`. The reference calls
+  `.ToString()` on a .NET `SecureString`; vanilla saves consequently use the
+  literal type name `System.Security.SecureString` as the PBKDF2 password,
+  rather than the UUID text that was appended to that object.
 - The Tetra Master card record layout for both formats (including the
   reordered 11-byte record used by the re-release), from `Card.cs`.
 - The item, support-ability, and Tetra Master card name tables, transcribed
@@ -34,25 +37,22 @@ Specifically derived from that project's analysis:
 - The legacy PS1 menu/name font table (character <-> byte code), from
   `SelectSave.cs::characterTable`.
 
-## What is confirmed vs. experimental
+## Layout validation
 
 Offsets that are exercised by the reference tool's live editing code paths
 (not just declared as constants) are treated as confirmed:
 gil, playtime, location, party-leader name/level (legacy); all legacy
 character stat/equipment/item/card offsets; the rr2016 metadata/container
-layout, item table, card table, gil, and party-member array; and, for
-rr2016 characters, level/name (cross-validated against `SelectSave.cs`'s
+layout, item table, card table, gil, party-member array, and equipment slots;
+and, for rr2016 characters, level/name (cross-validated against `SelectSave.cs`'s
 `FillGrid`, which independently reads the same character at fixed offsets
 +48/+57 for the grid preview).
 
-The rr2016 **equipment slot** offsets (weapon/head/arm/armor/accessory) are
-**not** independently confirmed. `SaveMap.cs` only declares
-`CHARECTER1_EQUIP_START_OFFSET_RR` (where the block starts); the individual
-slot order was inferred by analogy with the legacy layout. Editing them is
-exposed in this tool but flagged in the UI as experimental — worst case is a
-garbled equipment display recoverable by editing it again, not a corrupted
-save. The rr2016 per-character ability/AP-progress table is not exposed for
-editing at all for the same reason (offset known, internal layout unknown).
+The rr2016 equipment order (weapon/head/arm/armor/accessory at relative
+offsets +33 through +37) is used directly by the reference editor's live GUI
+control mappings and has also been cross-checked against plausible complete
+loadouts in vanilla saves. The rr2016 per-character ability/AP-progress table
+is not exposed for editing because its internal layout is still unknown.
 
 ## The Memoria mod save format
 
@@ -107,9 +107,10 @@ both are build-time tools only, not bundled as source in this repository.
 
 ## License of this project
 
-Code in this repository (`ffix_save_tool.py`, `ffix_save_tui.py`,
-`ffix_save_data.py`) is original work released under the MIT License (see
-`pyproject.toml`). This does not extend to Final Fantasy IX's own game data
+Code in this repository (`ffix_save_tool.py`, `ffix_save_memoria.py`,
+`ffix_save_tui.py`, `ffix_save_gui.py`, and `ffix_save_data.py`) is original
+work released under the MIT License (see `pyproject.toml`). This does not
+extend to Final Fantasy IX's own game data
 (item/ability/card names), which is Square Enix's intellectual property and
 is used here only as factual, non-executable reference data necessary for
 the save editor to function — the same basis on which every other FF9 save

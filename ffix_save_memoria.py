@@ -32,6 +32,7 @@ Python type (str/int/float) matches what was there before.
 """
 from __future__ import annotations
 
+import copy
 import struct
 
 import ffix_save_data as data
@@ -63,6 +64,8 @@ class _Reader:
         result = 0
         shift = 0
         while True:
+            if shift >= 35:
+                raise MemoriaFormatError(f"invalid 7-bit length at offset {self.pos}")
             b = self._take(1)[0]
             result |= (b & 0x7F) << shift
             if not (b & 0x80):
@@ -77,12 +80,18 @@ class _Reader:
         tag = self.i32()
         if tag == 1:
             count = self.i32()
+            if count < 0 or count > (len(self.buf) - self.pos) // 4:
+                raise MemoriaFormatError(f"invalid array count {count} at offset {self.pos - 4}")
             return [self.value() for _ in range(count)]
         if tag == 2:
             count = self.i32()
+            if count < 0 or count > (len(self.buf) - self.pos) // 5:
+                raise MemoriaFormatError(f"invalid dictionary count {count} at offset {self.pos - 4}")
             out: dict = {}
             for _ in range(count):
                 key = self.string()
+                if key in out:
+                    raise MemoriaFormatError(f"duplicate dictionary key {key!r}")
                 out[key] = self.value()
             return out
         if tag == 3:
@@ -156,10 +165,11 @@ def serialize(tree: dict) -> bytes:
 
 def looks_like_memoria(raw: bytes) -> bool:
     try:
-        parse(raw)
+        tree = parse(raw)
     except (MemoriaFormatError, UnicodeDecodeError, struct.error):
         return False
-    return True
+    common = tree.get("40000_Common")
+    return isinstance(common, dict) and isinstance(common.get("players"), list)
 
 
 # --------------------------------------------------------------------------- character view
@@ -275,6 +285,9 @@ class MemoriaSlot:
     def __init__(self, tree: dict) -> None:
         self.tree = tree
 
+    def clone(self) -> MemoriaSlot:
+        return MemoriaSlot(copy.deepcopy(self.tree))
+
     def _common(self) -> dict:
         return self.tree.setdefault("40000_Common", {})
 
@@ -335,7 +348,7 @@ class MemoriaSlot:
 
     @gil.setter
     def gil(self, value: int) -> None:
-        self._common()["gil"] = max(0, min(int(value), 99999999))
+        self._common()["gil"] = max(0, min(int(value), 9_999_999))
 
     @property
     def leader_name(self) -> str:

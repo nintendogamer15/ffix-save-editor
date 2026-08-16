@@ -499,9 +499,7 @@ class FFIXSaveGUI(QMainWindow):
         for key, _label in EQUIP_FIELDS:
             self._equip_edits[key].setText(data.item_name(char.get(key)) if char.has(key) else "")
         note = ""
-        if char.fmt == "rr2016":
-            note = "Equipment offsets for this format are experimental - see NOTICES.md."
-        elif char.fmt == "memoria":
+        if char.fmt == "memoria":
             note = "Strength/Speed/Magic/Spirit are inferred from Memoria's internal stat names - see NOTICES.md."
         self.editor_note.setText(note)
 
@@ -510,7 +508,8 @@ class FFIXSaveGUI(QMainWindow):
     def _apply_char_edits(self) -> None:
         if not self.require_slot():
             return
-        char = self.slot.character(self._current_char_index)
+        candidate = self.slot.clone()
+        char = candidate.character(self._current_char_index)
         try:
             char.name = self._name_edit.text()
             for key, _label in STAT_FIELDS:
@@ -530,6 +529,7 @@ class FFIXSaveGUI(QMainWindow):
         except ValueError as exc:
             QMessageBox.critical(self, "Could not apply edits", str(exc))
             return
+        self.slot = candidate
         self._commit(f"applied edits to {char.name or char.index}")
 
     def _max_selected_character(self) -> None:
@@ -558,7 +558,7 @@ class FFIXSaveGUI(QMainWindow):
             QMessageBox.critical(self, "Invalid gil", f"Not a number: {self.gil_edit.text()!r}")
             return
         self.slot.gil = amount
-        self._commit(f"gil set to {amount:,}")
+        self._commit(f"gil set to {self.slot.gil:,}")
 
     def _add_item(self) -> None:
         if not self.require_slot():
@@ -569,7 +569,7 @@ class FFIXSaveGUI(QMainWindow):
             return
         try:
             item_id = data.resolve_item_id(token)
-            qty = int(self.item_qty_edit.text().strip())
+            qty = max(0, min(int(self.item_qty_edit.text().strip()), 99))
         except ValueError as exc:
             QMessageBox.critical(self, "Could not add item", str(exc))
             return
@@ -580,7 +580,7 @@ class FFIXSaveGUI(QMainWindow):
         if not self.require_slot():
             return
         try:
-            qty = int(self.item_qty_edit.text().strip())
+            qty = max(0, min(int(self.item_qty_edit.text().strip()), 99))
         except ValueError:
             qty = 99
         n = tool.give_all_items(self.slot, qty)
@@ -606,8 +606,8 @@ class FFIXSaveGUI(QMainWindow):
             self.log_line("No output path and no loaded file path to derive one from.")
             return
         try:
-            out_path.write_bytes(self.doc.to_bytes())
-        except OSError as exc:
+            tool.write_new_document(self.doc, out_path, input_path=self.save_path)
+        except (OSError, ValueError) as exc:
             self.log_line(f"Could not write {out_path}: {exc}")
             QMessageBox.critical(self, "Write failed", str(exc))
             return
@@ -619,15 +619,13 @@ class FFIXSaveGUI(QMainWindow):
             return
         answer = QMessageBox.question(
             self, "Overwrite in place?",
-            f"Overwrite {self.save_path} in place?\nA backup will be written to {self.save_path}.bak first.",
+            f"Overwrite {self.save_path} in place?\nA new numbered .bak backup will be written first.",
         )
         if answer != QMessageBox.Yes:
             return
-        backup = self.save_path.with_suffix(self.save_path.suffix + ".bak")
         try:
-            backup.write_bytes(self.save_path.read_bytes())
-            self.save_path.write_bytes(self.doc.to_bytes())
-        except OSError as exc:
+            backup = tool.write_document_in_place(self.doc, self.save_path)
+        except (OSError, ValueError) as exc:
             self.log_line(f"In-place write failed: {exc}")
             QMessageBox.critical(self, "Write failed", str(exc))
             return

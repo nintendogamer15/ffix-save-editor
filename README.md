@@ -12,7 +12,7 @@ and more approachable interface.
 
 All three front-ends share the exact same save-format code
 (`ffix_save_tool.py` / `ffix_save_data.py` / `ffix_save_memoria.py`), so
-whichever one you use, the same files open and the same edits are available.
+format detection and save-file handling stay consistent between them.
 
 ## Supported save files
 
@@ -22,18 +22,20 @@ whichever one you use, the same files open and the same edits are available.
 | **rr2016** | The 2016 Steam/PC and mobile re-release, vanilla | `.dat` (PC) / `.sav` (iOS/Android), 2937152 B, AES-encrypted |
 | **memoria** | Save/autosave files written by the [Memoria mod](https://github.com/Albeoris/Memoria) | `SavedData_*_Memoria_*.dat`, unencrypted, size varies |
 
-The tool auto-detects which one you have by file size (with extension and, for
-`memoria`, a self-validating trial parse, as fallbacks) — just point it at the
-file. If you're running the Memoria mod, look for `SavedData_ww_Memoria_0_0.dat`
+The tool auto-detects which one you have by file size and validates the
+format-specific headers (with a self-validating trial parse for `memoria`) —
+just point it at the file. If you're running the Memoria mod, look for
+`SavedData_ww_Memoria_0_0.dat`
 (or similarly-numbered) and `SavedData_ww_Memoria_Autosave.dat` next to your
 `SavedData_ww.dat` — those are the ones Memoria actually reads/writes and the
 ones this tool can edit; the plain `SavedData_ww.dat` may not decrypt if the
 mod or a newer game patch changed the vanilla save encryption (see
 `NOTICES.md`).
 
-**Always keep a backup of your original save before editing.** `--out` /
-"Write New File" never touch the input file; `--in-place` / "Write In-Place"
-write a `.bak` backup first, automatically.
+**Always keep a backup of your original save before editing.** The `--out`
+option and "Write New File" action refuse to overwrite the input file;
+`--in-place` and "Write In-Place" write a `.bak` backup first, automatically.
+Existing backups are preserved as `.bak.1`, `.bak.2`, and so on.
 
 Don't have a save file handy to try this on? `examples/` has a real,
 fresh-start Memoria-format save you can point any front-end at right away —
@@ -47,8 +49,11 @@ needed by the CLI/TUI/GUI for rr2016 saves), `textual` (TUI only), and
 bundles Qt itself).
 
 ```bash
-pip install pycryptodome textual pyside6-essentials
+pip install ".[tui,gui]"
 ```
+
+For only the CLI, use `pip install .`; for only one interface, use
+`pip install ".[tui]"` or `pip install ".[gui]"`.
 
 If your system Python is externally managed (PEP 668) and you'd rather not
 touch it, install into a local, non-system folder instead and point
@@ -69,10 +74,11 @@ Or launch it with no arguments and type a path into the sidebar. Once
 loaded:
 
 - The **Slot** dropdown lists every save the tool found in the file — every
-  occupied memory-card block for legacy saves, or every occupied
+  FFIX memory-card block for legacy saves, or every occupied
   (slot, file) pair for rr2016 saves (it tries all 135 combinations; this
   takes well under a second).
-- The **Party** tab shows all 9 party-roster rows. Click a row to load it
+- The **Party** tab shows all character records (9 for legacy/rr2016, 12 for
+  Memoria-mod saves). Click a row to load it
   into the editor panel below: name, level, EXP, HP/MP, stats, and equipment
   are all editable Inputs; press **Apply Changes** to write them into memory
   (nothing touches disk until you explicitly write out). Legacy saves also
@@ -85,7 +91,7 @@ loaded:
   Master cards read-only.
 - **Write New File** writes to the path in the box (or an auto `*.edited.*`
   name next to the input). **Write In-Place** asks for confirmation, then
-  backs up the original to `.bak` before overwriting it.
+  backs up the original to a new numbered `.bak` file before overwriting it.
 
 ## CLI
 
@@ -137,8 +143,9 @@ Prefer a plain window with buttons and text boxes over a terminal UI? Run:
 python3 ffix_save_gui.py [path/to/save]
 ```
 
-It has the same feature set as the TUI (party editor, items, cards, gil,
-write out / write in-place with backup) in a plain window instead. File
+It has the same core editing features as the TUI (party editor, items, cards,
+gil, write out / write in-place with backup) in a plain window instead. The
+legacy support-ability checklist is currently TUI-only. File
 pickers are Qt's, which on Linux means your desktop's actual native dialog
 (KDE, GNOME, etc. via the XDG desktop portal) rather than a generic
 fallback. It opens in dark mode by default (a Fusion-style dark palette,
@@ -169,16 +176,25 @@ unless you're modifying the source. To build them yourself instead:
 
 Gil, playtime (read-only), location (legacy, read-only), the current party
 (rr2016, read-only), and per-character level/EXP/HP/MP/base stats/equipment,
-plus inventory (add/set quantity for any of the 256 known items and gear
+plus inventory (add or raise the quantity of any of the 256 known items and gear
 pieces) and, for legacy saves, the 64 support abilities. Tetra Master cards
 are listed but not yet editable from the UI (the record layout is known for
 both formats — see `ffix_save_tool.py::Slot.set_card` — a CLI/TUI hook is a
 reasonable follow-up).
 
-rr2016 equipment-slot offsets are inferred by analogy with the legacy layout
-and are **not independently confirmed** — see `NOTICES.md` for exactly which
-offsets are solid vs. best-effort. Worst case from a wrong equipment edit is
-a garbled item name in that slot, not a corrupted save.
+The rr2016 equipment-slot offsets are confirmed by the reference editor's live
+control mappings and cross-checked against real vanilla saves; see
+`NOTICES.md` for validation details.
+
+## Tests
+
+```bash
+python -m unittest discover -v
+```
+
+The committed tests generate synthetic PS1, encrypted rr2016, and Memoria
+fixtures in memory. The included fresh-start Memoria save is useful for manual
+testing, but the automated suite does not depend on redistributed player saves.
 
 ## Project layout
 
