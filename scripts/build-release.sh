@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-release_label="${1:-v0.3.1}"
+release_label="${1:-v0.3.2}"
 output_dir="${2:-${repo_dir}/artifacts}"
 dotnet_cmd="${DOTNET_COMMAND:-dotnet}"
 safe_label="${release_label//[^A-Za-z0-9._-]/-}"

@@ -49,7 +49,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void LoadFile(object? sender, RoutedEventArgs e) => Open(PathBox.Text ?? string.Empty);
+    private void LoadFile(object? sender, RoutedEventArgs e) => Open(PathBox.Text);
 
     private void ToggleTheme(object? sender, RoutedEventArgs e)
     {
@@ -58,8 +58,14 @@ public sealed partial class MainWindow : Window
                 ? ThemeVariant.Light : ThemeVariant.Dark;
     }
 
-    private void Open(string path)
+    private void Open(string? path)
     {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            Error("Choose a save file before loading.");
+            return;
+        }
+
         try
         {
             var fullPath = Path.GetFullPath(path.Trim());
@@ -74,7 +80,8 @@ public sealed partial class MainWindow : Window
             LoadSelectedSlot();
             _viewModel.AppendLog($"Loaded {fullPath}: {SaveDocument.FormatLabel(candidate.Format)}, {references.Count} occupied save(s).");
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SaveFormatException or ArgumentException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SaveFormatException
+                                          or ArgumentException or NotSupportedException)
         {
             Error($"Could not open save: {exception.Message}");
         }

@@ -31,8 +31,10 @@ public sealed class SaveDocument
 
     public SaveFormat Format { get; }
     public RrMetadata? Metadata { get; }
-    public static SaveDocument Open(string path)
+    public static SaveDocument Open(string? path)
     {
+        if (string.IsNullOrWhiteSpace(path))
+            throw new SaveFormatException("No save file was selected.");
         var raw = File.ReadAllBytes(path);
         return Parse(path, raw);
     }

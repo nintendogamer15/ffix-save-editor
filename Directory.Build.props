@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
-    <Version>0.3.1</Version>
+    <Version>0.3.2</Version>
     <Authors>FFIX Save Editor contributors</Authors>
     <Copyright>Copyright (c) 2026 FFIX Save Editor contributors</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
