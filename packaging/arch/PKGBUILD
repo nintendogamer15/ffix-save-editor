@@ -1,0 +1,62 @@
+# Maintainer: Robert
+
+pkgname=ffix-save-editor
+pkgver="${PKGVER:-0.0.0}"
+pkgrel=1
+pkgdesc="Cross-platform Final Fantasy IX save editor"
+arch=('x86_64')
+url="https://github.com/nintendogamer15/ffix-save-editor"
+license=('MIT')
+depends=(
+  'ca-certificates'
+  'fontconfig'
+  'glibc'
+  'hicolor-icon-theme'
+  'icu'
+  'krb5'
+  'libgcc'
+  'libice'
+  'libsm'
+  'libstdc++'
+  'libx11'
+  'openssl'
+  'tzdata'
+  'ttf-dejavu'
+  'zlib'
+)
+optdepends=('xdg-desktop-portal: native desktop file picker integration')
+checkdepends=('appstream' 'desktop-file-utils')
+options=('!strip' '!debug')
+source=(
+  'app-binary'
+  'ffix-save-editor.desktop'
+  'io.github.nintendogamer15.FFIXSaveEditor.metainfo.xml'
+  'icon.png'
+  'LICENSE'
+  'NOTICES.md'
+)
+sha256sums=(
+  'SKIP'
+  '3d321c975b2df8a008445b576a3395955f885bfc3f864ea7b467d6c801f0d8af'
+  '5fe027dcd1c5a22858745458379afdd346b7e826c48af349b5af79d4effa83ef'
+  'f8328429abb28cee2d870cad37d4c1dc639436b05ae2951abde815ada0be539e'
+  'f30f9e9bea06080651848e2710a13de4b816f1bf8ae397c052449f8dfd9d49e6'
+  '49a28973365a7c2b40b5094a966a6be8c364414ac64c02362f65872b9a0936df'
+)
+
+check() {
+  desktop-file-validate "${srcdir}/ffix-save-editor.desktop"
+  appstreamcli validate --no-net "${srcdir}/io.github.nintendogamer15.FFIXSaveEditor.metainfo.xml"
+}
+
+package() {
+  install -Dm0755 "${srcdir}/app-binary" "${pkgdir}/usr/bin/ffix-save-editor"
+  install -Dm0644 "${srcdir}/ffix-save-editor.desktop" \
+    "${pkgdir}/usr/share/applications/ffix-save-editor.desktop"
+  install -Dm0644 "${srcdir}/icon.png" \
+    "${pkgdir}/usr/share/icons/hicolor/256x256/apps/ffix-save-editor.png"
+  install -Dm0644 "${srcdir}/io.github.nintendogamer15.FFIXSaveEditor.metainfo.xml" \
+    "${pkgdir}/usr/share/metainfo/io.github.nintendogamer15.FFIXSaveEditor.metainfo.xml"
+  install -Dm0644 "${srcdir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm0644 "${srcdir}/NOTICES.md" "${pkgdir}/usr/share/doc/${pkgname}/NOTICES.md"
+}

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: MIT -->
+<component type="desktop-application">
+  <id>io.github.nintendogamer15.FFIXSaveEditor</id>
+  <name>Final Fantasy IX Save Editor</name>
+  <summary>View and safely edit Final Fantasy IX save files</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>A cross-platform editor for supported PlayStation, PC rerelease, and Memoria mod save formats.</p>
+  </description>
+  <developer id="io.github.nintendogamer15">
+    <name>nintendogamer15</name>
+  </developer>
+  <launchable type="desktop-id">ffix-save-editor.desktop</launchable>
+  <provides>
+    <binary>ffix-save-editor</binary>
+  </provides>
+  <url type="homepage">https://github.com/nintendogamer15/ffix-save-editor</url>
+  <content_rating type="oars-1.1" />
+</component>

@@ -1,0 +1,6 @@
+# This is a desktop GUI, so a command-line manual page is not useful.
+addFilter(r"no-manual-page-for-binary ffix-save-editor$")
+
+# .NET single-file bundles load these native platform libraries at runtime.
+# RPM's automatic dependency scanner cannot see those dynamic loads.
+addFilter(r"explicit-lib-dependency (krb5-libs|libICE|libSM|libX11|libgcc|libicu|libstdc\+\+|openssl-libs)$")

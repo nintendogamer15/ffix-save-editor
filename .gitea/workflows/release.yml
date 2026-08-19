@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   build:
@@ -42,24 +43,191 @@ jobs:
           if [ "${IS_TAG}" = "true" ]; then label="${REF_NAME}"; else label="manual-${COMMIT_SHA:0:7}"; fi
           ./scripts/build-release.sh "${label}" "${GITHUB_WORKSPACE}/release"
           sha256sum "${GITHUB_WORKSPACE}"/release/*
-      - name: Create Gitea release and upload assets
+      - name: Create or verify Gitea release assets
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          api="${GITEA_SERVER_URL}/api/v1/repos/${REPOSITORY_NAME}"
-          auth="Authorization: token ${GITEA_TOKEN}"
-          release_json="$(curl --silent --show-error --fail -H "${auth}" "${api}/releases/tags/${REF_NAME}" || true)"
-          if [ -z "${release_json}" ]; then
-            payload="$(jq -n --arg tag "${REF_NAME}" '{tag_name:$tag,name:$tag,body:"Built independently by Gitea Actions from the mirrored tag.",draft:false,prerelease:false}')"
-            release_json="$(curl --silent --show-error --fail -X POST -H "${auth}" -H "Content-Type: application/json" -d "${payload}" "${api}/releases")"
+          source/scripts/gitea-release-assets.sh "${REF_NAME}" "${GITHUB_WORKSPACE}"/release/*
+
+  arch-package:
+    needs: build
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    env:
+      GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+      GITEA_SERVER_URL: ${{ github.server_url }}
+      REPOSITORY_NAME: ${{ github.repository }}
+      COMMIT_SHA: ${{ github.sha }}
+      REF_NAME: ${{ github.ref_name }}
+      IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - name: Install Arch build and validation tools
+        run: |
+          pacman -Syu --noconfirm --needed git curl jq ca-certificates file namcap desktop-file-utils appstream
+      - name: Check out from this Gitea repository
+        run: |
+          git init source
+          cd source
+          git remote add origin "${GITEA_SERVER_URL}/${REPOSITORY_NAME}.git"
+          git -c http.extraHeader="Authorization: token ${GITEA_TOKEN}" fetch --depth 1 origin "${COMMIT_SHA}"
+          git checkout --detach FETCH_HEAD
+      - name: Obtain self-contained Linux package input
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/package-input" "${GITHUB_WORKSPACE}/packages"
+          if [ "${IS_TAG}" = "true" ]; then
+            version="${REF_NAME#v}"
+            asset="FFIXSaveEditor-${REF_NAME}-linux-x64"
+            release_json="$(curl --silent --show-error --fail -H "Authorization: token ${GITEA_TOKEN}" \
+              "${GITEA_SERVER_URL}/api/v1/repos/${REPOSITORY_NAME}/releases/tags/${REF_NAME}")"
+            url="$(printf '%s' "${release_json}" | jq -er --arg name "${asset}" '.assets[] | select(.name == $name) | .browser_download_url')"
+            curl --silent --show-error --fail --location -H "Authorization: token ${GITEA_TOKEN}" \
+              --output "${GITHUB_WORKSPACE}/package-input/${asset}" "${url}"
+          else
+            version="$(sed -n 's:.*<Version>\([^<]*\)</Version>.*:\1:p' source/Directory.Build.props)"
+            asset="FFIXSaveEditor-manual-${COMMIT_SHA:0:7}-linux-x64"
+            pacman -S --noconfirm --needed dotnet-sdk-10.0
+            source/scripts/build-release.sh "manual-${COMMIT_SHA:0:7}" "${GITHUB_WORKSPACE}/manual-release"
+            install -m 0755 "${GITHUB_WORKSPACE}/manual-release/${asset}" "${GITHUB_WORKSPACE}/package-input/${asset}"
           fi
-          release_id="$(printf '%s' "${release_json}" | jq -er '.id')"
-          for asset in "${GITHUB_WORKSPACE}"/release/*; do
-            name="$(basename "${asset}")"
-            existing_id="$(curl --silent --show-error --fail -H "${auth}" "${api}/releases/${release_id}/assets" \
-              | jq -r --arg name "${name}" '[.[] | select(.name == $name)][0].id // empty')"
-            if [ -n "${existing_id}" ]; then
-              curl --silent --show-error --fail -X DELETE -H "${auth}" "${api}/releases/${release_id}/assets/${existing_id}"
-            fi
-            curl --silent --show-error --fail -X POST -H "${auth}" -F "attachment=@${asset}" \
-              "${api}/releases/${release_id}/assets?name=${name}"
-          done
+          chmod 0755 "${GITHUB_WORKSPACE}/package-input/${asset}"
+          printf '%s\n' "${version}" > "${GITHUB_WORKSPACE}/package-version"
+          printf '%s\n' "${asset}" > "${GITHUB_WORKSPACE}/linux-asset-name"
+          file "${GITHUB_WORKSPACE}/package-input/${asset}"
+          ldd "${GITHUB_WORKSPACE}/package-input/${asset}"
+      - name: Build and validate Arch package
+        run: |
+          version="$(cat "${GITHUB_WORKSPACE}/package-version")"
+          asset="$(cat "${GITHUB_WORKSPACE}/linux-asset-name")"
+          useradd --create-home builder
+          chown -R builder:builder source "${GITHUB_WORKSPACE}/package-input" "${GITHUB_WORKSPACE}/packages"
+          runuser -u builder -- source/scripts/build-arch-package.sh "${version}" \
+            "${GITHUB_WORKSPACE}/package-input/${asset}" "${GITHUB_WORKSPACE}/packages"
+          package="${GITHUB_WORKSPACE}/packages/ffix-save-editor-${version}-1-x86_64.pkg.tar.zst"
+          (
+            cd source/packaging/arch
+            runuser -u builder -- env PKGVER="${version}" makepkg --printsrcinfo
+          )
+          namcap source/packaging/arch/PKGBUILD "${package}"
+          pacman -Qip "${package}"
+          pacman -Qlp "${package}"
+          pacman -U --noconfirm "${package}"
+          test -x /usr/bin/ffix-save-editor
+          test -f /usr/share/applications/ffix-save-editor.desktop
+          test -f /usr/share/icons/hicolor/256x256/apps/ffix-save-editor.png
+          cmp "${GITHUB_WORKSPACE}/package-input/${asset}" /usr/bin/ffix-save-editor
+          desktop-file-validate /usr/share/applications/ffix-save-editor.desktop
+          appstreamcli validate --no-net /usr/share/metainfo/io.github.nintendogamer15.FFIXSaveEditor.metainfo.xml
+          ldd /usr/bin/ffix-save-editor
+      - name: Smoke-test installed Arch package under Xvfb
+        run: |
+          pacman -S --noconfirm --needed xorg-server-xvfb xorg-xauth
+          set +e
+          timeout 8 xvfb-run -a ffix-save-editor source/examples/SavedData_ww_Memoria_0_0.dat \
+            >"${GITHUB_WORKSPACE}/arch-smoke.log" 2>&1
+          status=$?
+          set -e
+          if [ "${status}" -ne 124 ]; then
+            cat "${GITHUB_WORKSPACE}/arch-smoke.log"
+            echo "Arch GUI smoke test exited unexpectedly with status ${status}." >&2
+            exit 1
+          fi
+      - name: Publish Arch package and attach it to the Gitea release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version="$(cat "${GITHUB_WORKSPACE}/package-version")"
+          package="${GITHUB_WORKSPACE}/packages/ffix-save-editor-${version}-1-x86_64.pkg.tar.zst"
+          source/scripts/gitea-publish-package.sh arch Robert robert ffix-save-editor "${version}" "${package}"
+          source/scripts/gitea-release-assets.sh "${REF_NAME}" "${package}"
+
+  rpm-package:
+    needs: build
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    env:
+      GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+      GITEA_SERVER_URL: ${{ github.server_url }}
+      REPOSITORY_NAME: ${{ github.repository }}
+      COMMIT_SHA: ${{ github.sha }}
+      REF_NAME: ${{ github.ref_name }}
+      IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - name: Install Fedora build and validation tools
+        run: |
+          dnf install -y git curl jq ca-certificates file findutils rpm-build rpmdevtools rpmlint \
+            desktop-file-utils appstream util-linux
+      - name: Check out from this Gitea repository
+        run: |
+          git init source
+          cd source
+          git remote add origin "${GITEA_SERVER_URL}/${REPOSITORY_NAME}.git"
+          git -c http.extraHeader="Authorization: token ${GITEA_TOKEN}" fetch --depth 1 origin "${COMMIT_SHA}"
+          git checkout --detach FETCH_HEAD
+      - name: Obtain self-contained Linux package input
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/package-input" "${GITHUB_WORKSPACE}/packages"
+          if [ "${IS_TAG}" = "true" ]; then
+            version="${REF_NAME#v}"
+            asset="FFIXSaveEditor-${REF_NAME}-linux-x64"
+            release_json="$(curl --silent --show-error --fail -H "Authorization: token ${GITEA_TOKEN}" \
+              "${GITEA_SERVER_URL}/api/v1/repos/${REPOSITORY_NAME}/releases/tags/${REF_NAME}")"
+            url="$(printf '%s' "${release_json}" | jq -er --arg name "${asset}" '.assets[] | select(.name == $name) | .browser_download_url')"
+            curl --silent --show-error --fail --location -H "Authorization: token ${GITEA_TOKEN}" \
+              --output "${GITHUB_WORKSPACE}/package-input/${asset}" "${url}"
+          else
+            version="$(sed -n 's:.*<Version>\([^<]*\)</Version>.*:\1:p' source/Directory.Build.props)"
+            asset="FFIXSaveEditor-manual-${COMMIT_SHA:0:7}-linux-x64"
+            dnf install -y dotnet-sdk-10.0
+            source/scripts/build-release.sh "manual-${COMMIT_SHA:0:7}" "${GITHUB_WORKSPACE}/manual-release"
+            install -m 0755 "${GITHUB_WORKSPACE}/manual-release/${asset}" "${GITHUB_WORKSPACE}/package-input/${asset}"
+          fi
+          chmod 0755 "${GITHUB_WORKSPACE}/package-input/${asset}"
+          printf '%s\n' "${version}" > "${GITHUB_WORKSPACE}/package-version"
+          printf '%s\n' "${asset}" > "${GITHUB_WORKSPACE}/linux-asset-name"
+          file "${GITHUB_WORKSPACE}/package-input/${asset}"
+          ldd "${GITHUB_WORKSPACE}/package-input/${asset}"
+      - name: Build and validate RPM package
+        run: |
+          version="$(cat "${GITHUB_WORKSPACE}/package-version")"
+          asset="$(cat "${GITHUB_WORKSPACE}/linux-asset-name")"
+          useradd --create-home builder
+          chown -R builder:builder source "${GITHUB_WORKSPACE}/package-input" "${GITHUB_WORKSPACE}/packages"
+          runuser -u builder -- source/scripts/build-rpm-package.sh "${version}" \
+            "${GITHUB_WORKSPACE}/package-input/${asset}" "${GITHUB_WORKSPACE}/packages"
+          package="${GITHUB_WORKSPACE}/packages/ffix-save-editor-${version}-1.x86_64.rpm"
+          rpmlint -r source/packaging/rpm/rpmlintrc \
+            source/packaging/rpm/ffix-save-editor.spec "${package}"
+          rpm --checksig "${package}"
+          rpm -qip "${package}"
+          rpm -qlp "${package}"
+          rpm -qpR "${package}"
+          dnf install -y --setopt=install_weak_deps=False "${package}"
+          test -x /usr/bin/ffix-save-editor
+          test -f /usr/share/applications/ffix-save-editor.desktop
+          test -f /usr/share/icons/hicolor/256x256/apps/ffix-save-editor.png
+          cmp "${GITHUB_WORKSPACE}/package-input/${asset}" /usr/bin/ffix-save-editor
+          desktop-file-validate /usr/share/applications/ffix-save-editor.desktop
+          appstreamcli validate --no-net /usr/share/metainfo/io.github.nintendogamer15.FFIXSaveEditor.metainfo.xml
+          ldd /usr/bin/ffix-save-editor
+      - name: Smoke-test installed RPM package under Xvfb
+        run: |
+          dnf install -y xorg-x11-server-Xvfb
+          Xvfb :99 -screen 0 1280x800x24 >"${GITHUB_WORKSPACE}/xvfb.log" 2>&1 &
+          xvfb_pid=$!
+          trap 'kill "${xvfb_pid}" 2>/dev/null || true' EXIT
+          sleep 1
+          set +e
+          DISPLAY=:99 timeout 8 ffix-save-editor source/examples/SavedData_ww_Memoria_0_0.dat \
+            >"${GITHUB_WORKSPACE}/rpm-smoke.log" 2>&1
+          status=$?
+          set -e
+          if [ "${status}" -ne 124 ]; then
+            cat "${GITHUB_WORKSPACE}/rpm-smoke.log"
+            echo "RPM GUI smoke test exited unexpectedly with status ${status}." >&2
+            exit 1
+          fi
+      - name: Publish RPM package and attach it to the Gitea release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version="$(cat "${GITHUB_WORKSPACE}/package-version")"
+          package="${GITHUB_WORKSPACE}/packages/ffix-save-editor-${version}-1.x86_64.rpm"
+          source/scripts/gitea-publish-package.sh rpm Robert root ffix-save-editor "${version}" "${package}"
+          source/scripts/gitea-release-assets.sh "${REF_NAME}" "${package}"

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Final Fantasy IX Save Editor
+Comment=View and safely edit Final Fantasy IX save files
+Exec=ffix-save-editor %f
+Icon=ffix-save-editor
+Terminal=false
+Categories=Game;
+StartupNotify=true

@@ -42,6 +42,9 @@ secrets.json
 # Generated archives and logs
 *.zip
 *.tar.gz
+*.pkg.tar.*
+*.rpm
+*.src.rpm
 *.7z
 *.log
 

@@ -1,6 +1,6 @@
 # FFIX Save Editor
 
-A cross-platform save editor for Final Fantasy IX. Version 0.3.2 is implemented in C# on .NET 10, with an Avalonia desktop interface, a batch CLI, and an interactive terminal mode.
+A cross-platform save editor for Final Fantasy IX. Version 0.3.3 is implemented in C# on .NET 10, with an Avalonia desktop interface, a batch CLI, and an interactive terminal mode.
 
 ## Supported saves
 
@@ -43,6 +43,34 @@ chmod +x FFIXSaveEditor-vX.Y.Z-linux-x64
 
 Open a save, select an occupied slot/block, make edits in memory, then use **Write New File**. Keep your original until the edited save has loaded successfully in-game. In-place writing is available but requires confirmation and creates `.bak`, `.bak.1`, and later numbered backups.
 
+## Linux packages
+
+Robert's public Gitea registry provides native Arch and Fedora packages. The applications remain self-contained and do not require a system .NET runtime.
+
+On Arch, download and verify the repository key (current fingerprint `8BB3 2088 A56D CBB2 33A2 5E0F AF39 628B EDB7 B74E`), then trust it locally:
+
+```bash
+curl -fsSLo /tmp/robert-arch-repository.key https://git.11091994.xyz/api/packages/Robert/arch/repository.key
+gpg --show-keys --with-fingerprint /tmp/robert-arch-repository.key
+sudo pacman-key --add /tmp/robert-arch-repository.key
+sudo pacman-key --lsign-key 8BB32088A56DCBB233A25E0FAF39628BEDB7B74E
+```
+
+Add this to `/etc/pacman.conf`, then install with `sudo pacman -Syu ffix-save-editor`. Normal `pacman -Syu` runs deliver updates.
+
+```ini
+[robert]
+SigLevel = Required
+Server = https://git.11091994.xyz/api/packages/Robert/arch/$repo/$arch
+```
+
+On current Fedora, add Gitea's generated repository file and install the package. Normal `dnf upgrade` runs deliver updates.
+
+```bash
+sudo dnf config-manager addrepo --from-repofile=https://git.11091994.xyz/api/packages/Robert/rpm.repo
+sudo dnf install ffix-save-editor
+```
+
 ## Command line
 
 Examples from the source tree:
@@ -64,7 +92,7 @@ Install the .NET 10 SDK, then run:
 dotnet restore FFIX.SaveEditor.slnx
 dotnet build FFIX.SaveEditor.slnx --configuration Release
 dotnet test FFIX.SaveEditor.slnx --configuration Release
-./scripts/build-release.sh v0.3.2
+./scripts/build-release.sh v0.3.3
 ```
 
 The release script runs on Linux and publishes both `win-x64` and `linux-x64` self-contained single-file applications. Output goes to `artifacts/` unless another directory is supplied.
