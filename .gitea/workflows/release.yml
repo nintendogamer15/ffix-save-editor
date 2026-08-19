@@ -1,0 +1,65 @@
+name: Build and release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: mcr.microsoft.com/dotnet/sdk:10.0
+    env:
+      GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+      GITEA_SERVER_URL: ${{ github.server_url }}
+      REPOSITORY_NAME: ${{ github.repository }}
+      COMMIT_SHA: ${{ github.sha }}
+      REF_NAME: ${{ github.ref_name }}
+      IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - name: Install deterministic build utilities
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git curl jq ca-certificates
+      - name: Check out from this Gitea repository
+        run: |
+          git init source
+          cd source
+          git remote add origin "${GITEA_SERVER_URL}/${REPOSITORY_NAME}.git"
+          git -c http.extraHeader="Authorization: token ${GITEA_TOKEN}" fetch --depth 1 origin "${COMMIT_SHA}"
+          git checkout --detach FETCH_HEAD
+      - name: Restore and test
+        working-directory: source
+        run: |
+          dotnet restore FFIX.SaveEditor.slnx
+          dotnet test FFIX.SaveEditor.slnx --configuration Release --no-restore
+      - name: Publish Windows and Linux from Linux
+        working-directory: source
+        run: |
+          if [ "${IS_TAG}" = "true" ]; then label="${REF_NAME}"; else label="manual-${COMMIT_SHA:0:7}"; fi
+          ./scripts/build-release.sh "${label}" "${GITHUB_WORKSPACE}/release"
+          sha256sum "${GITHUB_WORKSPACE}"/release/*
+      - name: Create Gitea release and upload assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          api="${GITEA_SERVER_URL}/api/v1/repos/${REPOSITORY_NAME}"
+          auth="Authorization: token ${GITEA_TOKEN}"
+          release_json="$(curl --silent --show-error --fail -H "${auth}" "${api}/releases/tags/${REF_NAME}" || true)"
+          if [ -z "${release_json}" ]; then
+            payload="$(jq -n --arg tag "${REF_NAME}" '{tag_name:$tag,name:$tag,body:"Built independently by Gitea Actions from the mirrored tag.",draft:false,prerelease:false}')"
+            release_json="$(curl --silent --show-error --fail -X POST -H "${auth}" -H "Content-Type: application/json" -d "${payload}" "${api}/releases")"
+          fi
+          release_id="$(printf '%s' "${release_json}" | jq -er '.id')"
+          for asset in "${GITHUB_WORKSPACE}"/release/*; do
+            name="$(basename "${asset}")"
+            existing_id="$(curl --silent --show-error --fail -H "${auth}" "${api}/releases/${release_id}/assets" \
+              | jq -r --arg name "${name}" '[.[] | select(.name == $name)][0].id // empty')"
+            if [ -n "${existing_id}" ]; then
+              curl --silent --show-error --fail -X DELETE -H "${auth}" "${api}/releases/${release_id}/assets/${existing_id}"
+            fi
+            curl --silent --show-error --fail -X POST -H "${auth}" -F "attachment=@${asset}" \
+              "${api}/releases/${release_id}/assets?name=${name}"
+          done

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>FFIXSaveEditor.Cli</AssemblyName>
+    <RootNamespace>FFIX.SaveEditor.Cli</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../FFIX.SaveEditor.Core/FFIX.SaveEditor.Core.csproj" />
+  </ItemGroup>
+</Project>

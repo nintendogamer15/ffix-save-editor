@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>FFIX.SaveEditor.Core</AssemblyName>
+    <RootNamespace>FFIX.SaveEditor.Core</RootNamespace>
+    <Description>Binary format and safe editing library for Final Fantasy IX saves.</Description>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="src/FFIX.SaveEditor.Core/FFIX.SaveEditor.Core.csproj" />
+  <Project Path="src/FFIX.SaveEditor.Cli/FFIX.SaveEditor.Cli.csproj" />
+  <Project Path="src/FFIX.SaveEditor.Gui/FFIX.SaveEditor.Gui.csproj" />
+  <Project Path="tests/FFIX.SaveEditor.Tests/FFIX.SaveEditor.Tests.csproj" />
+</Solution>

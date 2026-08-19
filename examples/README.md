@@ -7,12 +7,12 @@ there's something to open right away without needing your own save file
 first, and so the `memoria` format path is exercised by anyone trying the
 project fresh. It has no personal or identifying data in it.
 
-Try it with any of the three front-ends:
+Try it with either front-end from a source checkout:
 
 ```bash
-python3 ffix_save_tool.py examples/SavedData_ww_Memoria_0_0.dat --inspect
-python3 ffix_save_tui.py examples/SavedData_ww_Memoria_0_0.dat
-python3 ffix_save_gui.py examples/SavedData_ww_Memoria_0_0.dat
+dotnet run --project src/FFIX.SaveEditor.Cli -- examples/SavedData_ww_Memoria_0_0.dat --inspect
+dotnet run --project src/FFIX.SaveEditor.Cli -- examples/SavedData_ww_Memoria_0_0.dat --interactive
+dotnet run --project src/FFIX.SaveEditor.Gui -- examples/SavedData_ww_Memoria_0_0.dat
 ```
 
 `--inspect` prints:

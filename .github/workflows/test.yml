@@ -12,19 +12,11 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-dotnet@v4
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-      - name: Install project and test dependencies
-        run: python -m pip install ".[tui]"
-      - name: Compile source
-        run: python -m compileall -q ffix_save_data.py ffix_save_memoria.py ffix_save_tool.py ffix_save_tui.py ffix_save_gui.py
-      - name: Run tests
-        run: python -m unittest discover -v
+          dotnet-version: "10.0.x"
+      - run: dotnet restore FFIX.SaveEditor.slnx
+      - run: dotnet build FFIX.SaveEditor.slnx --configuration Release --no-restore
+      - run: dotnet test FFIX.SaveEditor.slnx --configuration Release --no-build

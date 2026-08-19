@@ -8,7 +8,7 @@ the **Memoria FF9 Save Editor** project (Gjoerulv; forum thread at
 forums.qhimm.com, topic 11494), a copy of which was provided as reference
 material for this project (`Memoria_FF9SaveEditor-main/`, a C#/WinForms
 application). No source file from that project is copied or redistributed
-here — this project is an independent Python re-implementation written from
+here — this project is an independent C#/.NET re-implementation written from
 scratch, but it would not have been possible without that prior
 reverse-engineering work, especially for the AES-encrypted 2016 re-release
 format. No license file was included with the reference copy; this project
@@ -65,8 +65,9 @@ convention. This is *not* the same file as the vanilla encrypted
 `SavedData_ww.dat` container (that file is still handled by the rr2016 path
 above) and was not covered by anything in the reference project — it was
 reverse-engineered from scratch for this project directly from two real
-save files, with no prior documentation consulted. See
-`ffix_save_memoria.py` for the full format writeup.
+save files, with no prior documentation consulted. See the implementation in
+`src/FFIX.SaveEditor.Core/MemoriaFormat.cs` and its regression tests for the
+tagged-value details.
 
 Confidence: the parser/serializer round-trips both sample files
 byte-for-byte (parse → reserialize reproduces the exact original bytes),
@@ -81,35 +82,22 @@ loadout), but not confirmed the way the legacy/rr2016 field names are.
 Support-ability data (`sa_extended`) is present in the format but not
 decoded or exposed for editing.
 
-## Python dependencies
+## Runtime and build dependencies
 
-This project uses:
+- [.NET](https://dotnet.microsoft.com/) (MIT License) provides the runtime,
+  standard cryptography APIs, and SDK. Release executables include the required
+  runtime under Microsoft's .NET distribution terms.
+- [Avalonia UI](https://avaloniaui.net/) (MIT License) provides the desktop
+  interface and its DataGrid, Fluent theme, and Inter font packages.
+- xUnit and Microsoft.NET.Test.Sdk are development-only test dependencies.
 
-- [Textual](https://github.com/Textualize/textual) (MIT License) for the TUI.
-- [PyCryptodome](https://github.com/Legrandin/pycryptodome) (BSD-2-Clause /
-  public domain) for AES.
-- [PySide6](https://doc.qt.io/qtforpython/) (LGPL-3.0 — the official Qt for
-  Python bindings; only the `pyside6-essentials` subset is used, not the
-  full `pyside6` metapackage) for the GUI. LGPL-3.0 permits use in
-  differently-licensed applications as long as PySide6 itself isn't
-  modified and users can still replace/relink it, both true here: it's an
-  unmodified pip dependency, and running from source (`pip install
-  pyside6-essentials`) always works as an alternative to the bundled
-  portable builds.
-
-These are installed via `pip` and are not vendored into this repository
-(see README.md). The portable builds in `windows/` and `linux/` additionally
-use [PyInstaller](https://github.com/pyinstaller/pyinstaller) (GPL-2.0-or-later
-with an explicit exception allowing use with proprietary/differently-licensed
-applications, per PyInstaller's own license terms) and, for the AppImage,
-[appimagetool](https://github.com/AppImage/appimagetool) (MIT License) —
-both are build-time tools only, not bundled as source in this repository.
+Dependencies are restored from NuGet and are not vendored. Standard .NET
+RID-specific publishing creates the Windows and Linux releases.
 
 ## License of this project
 
-Code in this repository (`ffix_save_tool.py`, `ffix_save_memoria.py`,
-`ffix_save_tui.py`, `ffix_save_gui.py`, and `ffix_save_data.py`) is original
-work released under the MIT License (see `pyproject.toml`). This does not
+Code in this repository is original work released under the MIT License (see
+`LICENSE`). This does not
 extend to Final Fantasy IX's own game data
 (item/ability/card names), which is Square Enix's intellectual property and
 is used here only as factual, non-executable reference data necessary for

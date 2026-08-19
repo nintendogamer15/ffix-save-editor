@@ -1,44 +1,52 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-.Python
-.venv/
-venv/
-.env
-.vendor/
+# .NET build and test output
+**/bin/
+**/obj/
+TestResults/
+artifacts/
+*.user
+*.suo
 
 # Local save files and backups
 *.dat
-!examples/*.dat
+!examples/SavedData_ww_Memoria_0_0.dat
 *.sav
 *.mcr
 *.mcd
 *.mcs
 *.ps1
 *.gme
+*.bin
+*.edited.*
 *.bak
 *.bak.*
-*.edited.*
 
-# Private/local test fixtures (not redistributed)
+# Private/local fixtures (not redistributed)
 examples/Steam/
 examples/ff9save08_Lindblum/
 
-# Archives / generated output
-*.zip
+# Credentials and signing material
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_ed25519
+credentials.json
+secrets.json
 
-# Platform build artifacts (produced by windows/build.bat, linux/build.sh)
-windows/build/
-windows/dist/
-windows/.buildenv/
-linux/build/
-linux/dist/
-linux/AppDir/
-linux/.buildenv/
-linux/.mamba_root/
-linux/micromamba
-linux/appimagetool
-linux/.appimagetool-extracted/
-linux/*.AppImage
+# Generated archives and logs
+*.zip
+*.tar.gz
+*.7z
+*.log
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
