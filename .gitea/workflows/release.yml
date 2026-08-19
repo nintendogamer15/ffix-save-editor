@@ -54,6 +54,8 @@ jobs:
     container: archlinux:base-devel
     env:
       GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+      PACKAGE_PUBLISH_TOKEN: ${{ secrets.PACKAGE_PUBLISH_TOKEN }}
+      GITEA_PACKAGE_SERVER_URL: http://192.168.1.75:3001
       GITEA_SERVER_URL: ${{ github.server_url }}
       REPOSITORY_NAME: ${{ github.repository }}
       COMMIT_SHA: ${{ github.sha }}
@@ -144,6 +146,8 @@ jobs:
     container: fedora:latest
     env:
       GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+      PACKAGE_PUBLISH_TOKEN: ${{ secrets.PACKAGE_PUBLISH_TOKEN }}
+      GITEA_PACKAGE_SERVER_URL: http://192.168.1.75:3001
       GITEA_SERVER_URL: ${{ github.server_url }}
       REPOSITORY_NAME: ${{ github.repository }}
       COMMIT_SHA: ${{ github.sha }}

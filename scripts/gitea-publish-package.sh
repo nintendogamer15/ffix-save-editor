@@ -5,8 +5,8 @@ if [[ $# -ne 6 ]]; then
   echo "Usage: $0 <arch|rpm> <owner> <arch-repository|root> <package-name> <X.Y.Z> <package-file>" >&2
   exit 2
 fi
-: "${GITEA_TOKEN:?GITEA_TOKEN is required}"
-: "${GITEA_SERVER_URL:?GITEA_SERVER_URL is required}"
+: "${PACKAGE_PUBLISH_TOKEN:?PACKAGE_PUBLISH_TOKEN is required}"
+: "${GITEA_PACKAGE_SERVER_URL:?GITEA_PACKAGE_SERVER_URL is required}"
 : "${REPOSITORY_NAME:?REPOSITORY_NAME is required}"
 
 package_type="$1"
@@ -20,9 +20,9 @@ package_file="$(realpath "$6")"
 [[ ${version} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid package version: ${version}" >&2; exit 2; }
 [[ -f ${package_file} ]] || { echo "Package file does not exist: ${package_file}" >&2; exit 2; }
 
-server="${GITEA_SERVER_URL%/}"
+server="${GITEA_PACKAGE_SERVER_URL%/}"
 api="${server}/api/v1"
-auth="Authorization: token ${GITEA_TOKEN}"
+package_user="Robert"
 filename="$(basename "${package_file}")"
 local_sha="$(sha256sum "${package_file}" | cut -d ' ' -f 1)"
 registry_version="${version}-1"
@@ -32,7 +32,8 @@ trap 'rm -rf "${work_dir}"' EXIT
 check_existing() {
   local body status existing_sha
   body="${work_dir}/files.json"
-  status="$(curl --silent --show-error --output "${body}" --write-out '%{http_code}' --header "${auth}" \
+  status="$(curl --silent --show-error --output "${body}" --write-out '%{http_code}' \
+    --user "${package_user}:${PACKAGE_PUBLISH_TOKEN}" \
     "${api}/packages/${owner}/${package_type}/${package_name}/${registry_version}/files")"
   if [[ ${status} == 404 ]]; then
     return 1
@@ -62,7 +63,8 @@ if ! check_existing; then
   fi
   response="${work_dir}/upload-response.txt"
   status="$(curl --silent --show-error --output "${response}" --write-out '%{http_code}' \
-    --request PUT --header "${auth}" --upload-file "${package_file}" "${upload_url}")"
+    --request PUT --user "${package_user}:${PACKAGE_PUBLISH_TOKEN}" \
+    --upload-file "${package_file}" "${upload_url}")"
   if [[ ${status} != 201 && ${status} != 409 ]]; then
     echo "Gitea ${package_type} upload failed with HTTP ${status}:" >&2
     cat "${response}" >&2
@@ -77,7 +79,8 @@ if ! check_existing; then
 fi
 
 details="${work_dir}/package.json"
-status="$(curl --silent --show-error --output "${details}" --write-out '%{http_code}' --header "${auth}" \
+status="$(curl --silent --show-error --output "${details}" --write-out '%{http_code}' \
+  --user "${package_user}:${PACKAGE_PUBLISH_TOKEN}" \
   "${api}/packages/${owner}/${package_type}/${package_name}/${registry_version}")"
 [[ ${status} == 200 ]] || { echo "Gitea package detail lookup failed with HTTP ${status}:" >&2; cat "${details}" >&2; exit 1; }
 linked_repository="$(jq -r '.repository.full_name // empty' "${details}")"
@@ -85,10 +88,15 @@ if [[ -z ${linked_repository} ]]; then
   repo_name="${REPOSITORY_NAME#*/}"
   response="${work_dir}/link-response.txt"
   status="$(curl --silent --show-error --output "${response}" --write-out '%{http_code}' \
-    --request POST --header "${auth}" \
+    --request POST --user "${package_user}:${PACKAGE_PUBLISH_TOKEN}" \
     "${api}/packages/${owner}/${package_type}/${package_name}/-/link/${repo_name}")"
-  [[ ${status} == 201 ]] || { echo "Gitea package-to-repository link failed with HTTP ${status}:" >&2; cat "${response}" >&2; exit 1; }
-  echo "Linked ${package_type}/${package_name} to ${REPOSITORY_NAME}."
+  if [[ ${status} == 201 ]]; then
+    echo "Linked ${package_type}/${package_name} to ${REPOSITORY_NAME}."
+  else
+    echo "WARNING: Gitea package-to-repository link failed with HTTP ${status}; package publication remains successful:" >&2
+    cat "${response}" >&2
+    echo "WARNING: Link ${package_type}/${package_name} to ${REPOSITORY_NAME} manually in Gitea if needed." >&2
+  fi
 elif [[ ${linked_repository} != "${REPOSITORY_NAME}" ]]; then
   echo "Package is linked to ${linked_repository}, not ${REPOSITORY_NAME}; refusing to relink it." >&2
   exit 1
