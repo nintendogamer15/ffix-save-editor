@@ -1,6 +1,6 @@
 # FFIX Save Editor
 
-A cross-platform save editor for Final Fantasy IX. Version 0.3.0 is implemented in C# on .NET 10, with an Avalonia desktop interface, a batch CLI, and an interactive terminal mode.
+A cross-platform save editor for Final Fantasy IX. Version 0.3.1 is implemented in C# on .NET 10, with an Avalonia desktop interface, a batch CLI, and an interactive terminal mode.
 
 ## Supported saves
 
@@ -64,7 +64,7 @@ Install the .NET 10 SDK, then run:
 dotnet restore FFIX.SaveEditor.slnx
 dotnet build FFIX.SaveEditor.slnx --configuration Release
 dotnet test FFIX.SaveEditor.slnx --configuration Release
-./scripts/build-release.sh v0.3.0
+./scripts/build-release.sh v0.3.1
 ```
 
 The release script runs on Linux and publishes both `win-x64` and `linux-x64` self-contained single-file applications. Output goes to `artifacts/` unless another directory is supplied.
