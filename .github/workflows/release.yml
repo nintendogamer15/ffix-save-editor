@@ -1,40 +1,156 @@
-name: Build and release
+name: Release
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version X.Y.Z. Leave blank to bump the current version.'
+        required: false
+        default: ''
+        type: string
+      bump:
+        description: 'Which part to bump when version is blank'
+        required: false
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      dry_run:
+        description: 'Validate and build everything without pushing or publishing'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
-  contents: read
+  contents: write
+
+# Two dispatches racing would both try to claim the same version.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      # A workflow_dispatch can be started from any branch in the Actions UI.
+      - name: Require main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "Releases must run from main, got ${GITHUB_REF}." >&2
+          exit 1
+
+      - name: Check out main
+        uses: actions/checkout@v4
         with:
-          dotnet-version: "10.0.x"
-      - name: Restore
-        run: dotnet restore FFIX.SaveEditor.slnx
-      - name: Test
-        run: dotnet test FFIX.SaveEditor.slnx --configuration Release --no-restore
-      - name: Publish Windows and Linux from Linux
+          # Full history so the script can see existing tags.
+          fetch-depth: 0
+
+      # Ordering: version, changelog, and tag checks run before any toolchain
+      # install or build, so a mistyped release fails in seconds rather than
+      # after a long build.
+      - name: Resolve version and stamp the changelog
+        id: prepare
         env:
-          RELEASE_LABEL: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('manual-{0}', github.run_number) }}
-        run: ./scripts/build-release.sh "$RELEASE_LABEL" "$RUNNER_TEMP/release"
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_BUMP: ${{ inputs.bump }}
+        run: |
+          version="$(./scripts/prepare-release.sh "${RELEASE_VERSION:-${RELEASE_BUMP}}")"
+          {
+            echo "version=${version}"
+            echo "tag=v${version}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Confirm the release tag is unused
+        env:
+          TAG: ${{ steps.prepare.outputs.tag }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists; published tags are not reused." >&2
+            exit 1
+          fi
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Run the repository checks
+        run: |
+          dotnet restore FFIX.SaveEditor.slnx
+          dotnet build FFIX.SaveEditor.slnx --configuration Release --no-restore
+          dotnet test FFIX.SaveEditor.slnx --configuration Release --no-build
+
+      - name: Build release assets
+        env:
+          TAG: ${{ steps.prepare.outputs.tag }}
+          RELEASE_DIR: ${{ runner.temp }}/release
+        run: ./scripts/build-release.sh "${TAG}" "${RELEASE_DIR}"
+
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
           name: FFIXSaveEditor-build-${{ github.run_number }}
           path: ${{ runner.temp }}/release/*
           if-no-files-found: error
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ runner.temp }}/release/*
-          generate_release_notes: true
+
+      # Ordering: the branch is pushed before the tag is created. If the branch
+      # moved during the run this push is rejected and no tag or release exists,
+      # which is recoverable. A tag created first would point at a commit that
+      # never landed.
+      #
+      # Add named files only. The build has already run, so `git add -A` here
+      # would sweep in artifacts, caches, and lockfile churn.
+      - name: Commit and push the release preparation
+        if: ${{ !inputs.dry_run }}
+        env:
+          TAG: ${{ steps.prepare.outputs.tag }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Directory.Build.props
+          git commit --message "release: prepare ${TAG}"
+          git push origin HEAD:main
+
+      - name: Create and push the annotated tag
+        if: ${{ !inputs.dry_run }}
+        env:
+          TAG: ${{ steps.prepare.outputs.tag }}
+        run: |
+          git tag --annotate "${TAG}" --message "Release ${TAG}"
+          git push origin "${TAG}"
+
+      # A tag pushed with the workflow token does not start another workflow
+      # run, so this job publishes from what it just built rather than handing
+      # off to a tag-triggered job.
+      - name: Create the GitHub release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.prepare.outputs.tag }}
+          RELEASE_DIR: ${{ runner.temp }}/release
+        run: |
+          gh release create "${TAG}" \
+            --verify-tag \
+            --title "Release ${TAG}" \
+            --generate-notes \
+            "${RELEASE_DIR}"/*
+
+      - name: Summarize the run
+        if: always()
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+          REPOSITORY_URL: ${{ github.server_url }}/${{ github.repository }}
+          TAG: ${{ steps.prepare.outputs.tag }}
+        run: |
+          {
+            if [ -z "${TAG}" ]; then
+              echo "The release version was never resolved; see the failing step above."
+            elif [ "${DRY_RUN}" = "true" ]; then
+              echo "Dry run for ${TAG}: validated and built, nothing pushed or published."
+            else
+              echo "Published ${TAG}: ${REPOSITORY_URL}/releases/tag/${TAG}"
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
