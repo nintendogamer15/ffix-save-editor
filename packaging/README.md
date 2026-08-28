@@ -16,6 +16,8 @@ Installed files include `/usr/bin/ffix-save-editor`, a desktop entry, a 256-pixe
 On a `v*` tag, Gitea Actions publishes packages to:
 
 - Arch repository `robert`: `https://git.11091994.xyz/api/packages/Robert/arch/robert`
-- Root RPM repository: `https://git.11091994.xyz/api/packages/Robert/rpm/upload`
+- Root RPM repository: `https://git.11091994.xyz/api/packages/Robert/rpm/upload?sign=true`
 
-Registry versions are immutable. The publish helper compares an existing file's SHA-256 and skips an identical package; a differing file at the same version is an error and is never deleted or replaced.
+Registry versions are immutable. Arch packages retain exact whole-file SHA-256 checks. RPM uploads request Gitea server signing; the helper verifies the stored RPM with the public repository key and compares signature-independent header/payload identity before accepting it.
+
+DNF consumes the server-signed registry RPM. The RPM attached to a release remains the locally built unsigned file, so its whole-file SHA-256 intentionally differs. If a new registry RPM cannot be verified, publication stops without deleting it and the package owner may need to remove that immutable version before retrying.
