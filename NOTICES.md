@@ -89,10 +89,21 @@ decoded or exposed for editing.
   runtime under Microsoft's .NET distribution terms.
 - [Avalonia UI](https://avaloniaui.net/) (MIT License) provides the desktop
   interface and its DataGrid, Fluent theme, and Inter font packages.
+- SaveEditor.Ui, pinned as a git submodule at
+  `6ee70c4f02cdbd9790c9a64738cac97bba8e734e`, provides the shared editor shell,
+  theming, recents, edit history, and safe-file workflow under the 0BSD license
+  (`LICENSES/SaveEditor.Ui-0BSD.txt`).
+- CommunityToolkit.Mvvm 8.4.2 is the locked MVVM runtime dependency used by
+  SaveEditor.Ui and is distributed under MIT
+  (`LICENSES/CommunityToolkit.Mvvm-MIT.txt`).
 - xUnit and Microsoft.NET.Test.Sdk are development-only test dependencies.
 
 Dependencies are restored from NuGet and are not vendored. Standard .NET
 RID-specific publishing creates the Windows and Linux releases.
+
+The standalone release includes a third-party licence bundle containing these
+checked-in texts. The same texts are embedded in the GUI and available through
+Help > About.
 
 ## License of this project
 

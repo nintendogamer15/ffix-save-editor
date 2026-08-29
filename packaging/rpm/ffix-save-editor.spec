@@ -16,6 +16,8 @@ Source2:        io.github.nintendogamer15.FFIXSaveEditor.metainfo.xml
 Source3:        icon.png
 Source4:        LICENSE
 Source5:        NOTICES.md
+Source6:        SaveEditor.Ui-0BSD.txt
+Source7:        CommunityToolkit.Mvvm-MIT.txt
 
 ExclusiveArch:  x86_64
 BuildRequires:  appstream
@@ -53,6 +55,8 @@ install -Dm0644 %{SOURCE3} \
   %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/ffix-save-editor.png
 install -Dm0644 %{SOURCE4} %{buildroot}%{_licensedir}/%{name}/LICENSE
 install -Dm0644 %{SOURCE5} %{buildroot}%{_docdir}/%{name}/NOTICES.md
+install -Dm0644 %{SOURCE6} %{buildroot}%{_licensedir}/%{name}/LICENSES/SaveEditor.Ui-0BSD.txt
+install -Dm0644 %{SOURCE7} %{buildroot}%{_licensedir}/%{name}/LICENSES/CommunityToolkit.Mvvm-MIT.txt
 
 %check
 desktop-file-validate %{buildroot}%{_datadir}/applications/ffix-save-editor.desktop
@@ -65,6 +69,7 @@ appstreamcli validate --no-net \
 %{_datadir}/icons/hicolor/256x256/apps/ffix-save-editor.png
 %{_datadir}/metainfo/io.github.nintendogamer15.FFIXSaveEditor.metainfo.xml
 %license %{_licensedir}/%{name}/LICENSE
+%license %{_licensedir}/%{name}/LICENSES/*
 %doc %{_docdir}/%{name}/NOTICES.md
 
 %changelog

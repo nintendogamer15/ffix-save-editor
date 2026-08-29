@@ -9,14 +9,21 @@
     <SelfContained>true</SelfContained>
     <PublishTrimmed>false</PublishTrimmed>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <AllowedReferenceRelatedFileExtensions Condition="'$(Configuration)' == 'Release'">none</AllowedReferenceRelatedFileExtensions>
+    <DebugType Condition="'$(Configuration)' == 'Release'">None</DebugType>
+    <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.1" />
     <PackageReference Include="Avalonia.Desktop" Version="12.1.1" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.1" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
+    <ProjectReference Include="../../external/save-editor-gui-framework/src/SaveEditor.Ui/SaveEditor.Ui.csproj"
+                      SetConfiguration="Configuration=$(Configuration)" />
     <ProjectReference Include="../FFIX.SaveEditor.Core/FFIX.SaveEditor.Core.csproj" />
     <AvaloniaResource Include="../../assets/icon.png" Link="Assets/icon.png" />
+    <EmbeddedResource Include="../../LICENSE" LogicalName="Legal/LICENSE" />
+    <EmbeddedResource Include="../../NOTICES.md" LogicalName="Legal/NOTICES.md" />
+    <EmbeddedResource Include="../../LICENSES/*.txt" LogicalName="Legal/LICENSES/%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

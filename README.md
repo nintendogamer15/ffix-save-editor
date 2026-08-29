@@ -41,7 +41,7 @@ chmod +x FFIXSaveEditor-vX.Y.Z-linux-x64
 ./FFIXSaveEditor-vX.Y.Z-linux-x64
 ```
 
-Open a save, select an occupied slot/block, make edits in memory, then use **Write New File**. Keep your original until the edited save has loaded successfully in-game. In-place writing is available but requires confirmation and creates `.bak`, `.bak.1`, and later numbered backups.
+Open a save, select an occupied slot/block, make edits in memory, then use **Save As**. Keep your original until the edited save has loaded successfully in-game. **Overwrite + Backup** is separate and always creates and verifies a backup first.
 
 ## Linux packages
 
@@ -89,13 +89,20 @@ Run with `--help` for all batch and slot-selection options. `--interactive` and 
 Install the .NET 10 SDK, then run:
 
 ```bash
-dotnet restore FFIX.SaveEditor.slnx
+git submodule update --init --recursive
+./scripts/check-submodule.sh
+dotnet restore FFIX.SaveEditor.slnx --locked-mode
 dotnet build FFIX.SaveEditor.slnx --configuration Release
 dotnet test FFIX.SaveEditor.slnx --configuration Release
 ./scripts/build-release.sh v0.3.4
 ```
 
 The release script runs on Linux and publishes both `win-x64` and `linux-x64` self-contained single-file applications. Output goes to `artifacts/` unless another directory is supplied.
+
+Retained-file identity checks, verified backups, external-content checks, and
+symlink refusal reduce ordinary overwrite risk. They do not eliminate a concurrent
+replacement of the final pathname or an ancestor directory after the last check;
+do not save while another process is moving or replacing the save path.
 
 ## Limitations
 

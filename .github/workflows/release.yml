@@ -43,10 +43,18 @@ jobs:
           exit 1
 
       - name: Check out main
-        uses: actions/checkout@v4
+        # actions/checkout v4.2.2
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           # Full history so the script can see existing tags.
           fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Verify pinned framework checkout
+        run: |
+          ./scripts/check-submodule.sh
+          ./scripts/check-workflows.sh
 
       # Ordering: version, changelog, and tag checks run before any toolchain
       # install or build, so a mistyped release fails in seconds rather than
@@ -73,13 +81,14 @@ jobs:
           fi
 
       - name: Set up .NET 10
-        uses: actions/setup-dotnet@v4
+        # actions/setup-dotnet v5.0.0
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
         with:
           dotnet-version: '10.0.x'
 
       - name: Run the repository checks
         run: |
-          dotnet restore FFIX.SaveEditor.slnx
+          dotnet restore FFIX.SaveEditor.slnx --locked-mode
           dotnet build FFIX.SaveEditor.slnx --configuration Release --no-restore
           dotnet test FFIX.SaveEditor.slnx --configuration Release --no-build
 
@@ -90,7 +99,8 @@ jobs:
         run: ./scripts/build-release.sh "${TAG}" "${RELEASE_DIR}"
 
       - name: Upload workflow artifacts
-        uses: actions/upload-artifact@v4
+        # actions/upload-artifact v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: FFIXSaveEditor-build-${{ github.run_number }}
           path: ${{ runner.temp }}/release/*
@@ -106,8 +116,10 @@ jobs:
       - name: Commit and push the release preparation
         if: ${{ !inputs.dry_run }}
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.prepare.outputs.tag }}
         run: |
+          gh auth setup-git
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add Directory.Build.props
@@ -117,8 +129,10 @@ jobs:
       - name: Create and push the annotated tag
         if: ${{ !inputs.dry_run }}
         env:
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.prepare.outputs.tag }}
         run: |
+          gh auth setup-git
           git tag --annotate "${TAG}" --message "Release ${TAG}"
           git push origin "${TAG}"
 

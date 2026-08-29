@@ -11,20 +11,42 @@ trap 'rm -rf "${stage_dir}"' EXIT
 
 mkdir -p "${output_dir}"
 cd "${repo_dir}"
+"${repo_dir}/scripts/check-submodule.sh"
+
+"${dotnet_cmd}" restore FFIX.SaveEditor.slnx --locked-mode
 
 "${dotnet_cmd}" publish src/FFIX.SaveEditor.Gui/FFIX.SaveEditor.Gui.csproj \
   --configuration Release --runtime win-x64 --self-contained true \
   -p:PublishSingleFile=true -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false \
-  --output "${stage_dir}/windows"
+  --no-restore --output "${stage_dir}/windows"
 "${dotnet_cmd}" publish src/FFIX.SaveEditor.Gui/FFIX.SaveEditor.Gui.csproj \
   --configuration Release --runtime linux-x64 --self-contained true \
   -p:PublishSingleFile=true -p:PublishTrimmed=false -p:DebugType=None -p:DebugSymbols=false \
-  --output "${stage_dir}/linux"
+  --no-restore --output "${stage_dir}/linux"
+
+# Avalonia's native runtime packs currently contribute native PDBs even when
+# DebugSymbols=false. They are diagnostics, not runtime dependencies; discard them using
+# the same Release publish handling as the pinned reference integration.
+find "${stage_dir}/windows" "${stage_dir}/linux" -type f -name '*.pdb' -delete
+
+[[ $(find "${stage_dir}/windows" -maxdepth 1 -type f | wc -l) -eq 1 ]] || {
+  echo "Windows publish produced related files instead of one executable." >&2
+  exit 1
+}
+[[ $(find "${stage_dir}/linux" -maxdepth 1 -type f | wc -l) -eq 1 ]] || {
+  echo "Linux publish produced related files instead of one executable." >&2
+  exit 1
+}
 
 windows_asset="${output_dir}/FFIXSaveEditor-${safe_label}-windows-x64.exe"
 linux_asset="${output_dir}/FFIXSaveEditor-${safe_label}-linux-x64"
+license_asset="${output_dir}/FFIXSaveEditor-${safe_label}-third-party-licenses.tar.gz"
 
 install -m 0644 "${stage_dir}/windows/FFIXSaveEditor.exe" "${windows_asset}"
 install -m 0755 "${stage_dir}/linux/FFIXSaveEditor" "${linux_asset}"
+mkdir -p "${stage_dir}/licenses/LICENSES"
+install -m 0644 LICENSE NOTICES.md "${stage_dir}/licenses/"
+install -m 0644 LICENSES/*.txt "${stage_dir}/licenses/LICENSES/"
+tar -C "${stage_dir}/licenses" -czf "${license_asset}" LICENSE NOTICES.md LICENSES
 
-printf '%s\n' "${windows_asset}" "${linux_asset}"
+printf '%s\n' "${windows_asset}" "${linux_asset}" "${license_asset}"

@@ -7,6 +7,7 @@ if [[ $# -ne 3 ]]; then
 fi
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+"${repo_dir}/scripts/check-submodule.sh"
 version="${1#v}"
 binary="$(realpath "$2")"
 output_dir="$(realpath -m "$3")"
@@ -24,6 +25,8 @@ install -m 0644 "${repo_dir}/packaging/linux/io.github.nintendogamer15.FFIXSaveE
 install -m 0644 "${repo_dir}/assets/icon.png" "${top_dir}/SOURCES/icon.png"
 install -m 0644 "${repo_dir}/LICENSE" "${top_dir}/SOURCES/LICENSE"
 install -m 0644 "${repo_dir}/NOTICES.md" "${top_dir}/SOURCES/NOTICES.md"
+install -m 0644 "${repo_dir}/LICENSES/SaveEditor.Ui-0BSD.txt" "${top_dir}/SOURCES/SaveEditor.Ui-0BSD.txt"
+install -m 0644 "${repo_dir}/LICENSES/CommunityToolkit.Mvvm-MIT.txt" "${top_dir}/SOURCES/CommunityToolkit.Mvvm-MIT.txt"
 install -m 0644 "${repo_dir}/packaging/rpm/ffix-save-editor.spec" "${top_dir}/SPECS/ffix-save-editor.spec"
 
 rpmbuild -bb --define "_topdir ${top_dir}" --define "app_version ${version}" \

@@ -11,6 +11,7 @@ if [[ $# -ne 3 ]]; then
 fi
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+"${repo_dir}/scripts/check-submodule.sh"
 version="${1#v}"
 binary="$(realpath "$2")"
 output_dir="$(realpath -m "$3")"
@@ -29,6 +30,8 @@ install -m 0644 "${repo_dir}/packaging/linux/io.github.nintendogamer15.FFIXSaveE
 install -m 0644 "${repo_dir}/assets/icon.png" "${work_dir}/icon.png"
 install -m 0644 "${repo_dir}/LICENSE" "${work_dir}/LICENSE"
 install -m 0644 "${repo_dir}/NOTICES.md" "${work_dir}/NOTICES.md"
+install -m 0644 "${repo_dir}/LICENSES/SaveEditor.Ui-0BSD.txt" "${work_dir}/SaveEditor.Ui-0BSD.txt"
+install -m 0644 "${repo_dir}/LICENSES/CommunityToolkit.Mvvm-MIT.txt" "${work_dir}/CommunityToolkit.Mvvm-MIT.txt"
 
 (
   cd "${work_dir}"
