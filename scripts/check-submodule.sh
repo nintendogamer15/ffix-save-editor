@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 path="external/save-editor-gui-framework"
-expected="6ee70c4f02cdbd9790c9a64738cac97bba8e734e"
+expected="ae57b4d5b1cc23a2e1b802f575789e523a1b5877"
 cd "${repo_dir}"
 
 gitlink="$(git ls-files --stage "${path}" | awk '{print $2}')"

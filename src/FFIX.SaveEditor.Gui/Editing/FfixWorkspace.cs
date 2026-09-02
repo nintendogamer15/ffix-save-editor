@@ -93,8 +93,6 @@ public sealed class FfixWorkspace
         IReadOnlyList<IEditableCharacter> characters = CurrentSlot?.Characters() ?? [];
         if ((uint)index >= characters.Count) throw new ArgumentOutOfRangeException(nameof(index));
         SelectedCharacterIndex = index;
-        HasPendingEdits = false;
-        Changed?.Invoke(this, EventArgs.Empty);
     }
 
     public void SetPendingEdits(bool value)
@@ -185,6 +183,66 @@ public sealed class FfixWorkspace
         }, $"Added {token.Trim()} at quantity {quantity}.");
     }
 
+    public EditResult ApplyInventory(IReadOnlyList<InventoryRowDraft> rows)
+    {
+        ArgumentNullException.ThrowIfNull(rows);
+        foreach (InventoryRowDraft row in rows)
+        {
+            if (string.IsNullOrWhiteSpace(row.Token))
+                return EditResult.Rejected("Enter or pick an item/gear name first.");
+            if (row.Quantity is < 0 or > 99)
+                return EditResult.Rejected("quantity must be a whole number from 0 to 99.");
+        }
+
+        return EditSlot(slot =>
+        {
+            foreach (InventoryRowDraft row in rows.OrderByDescending(entry => entry.SlotIndex))
+            {
+                int itemId = GameData.ResolveItemId(row.Token.Trim());
+                if (!slot.ReplaceItemAt(row.SlotIndex, itemId, row.Quantity))
+                    throw new InvalidOperationException("Inventory update failed.");
+            }
+        }, "Updated inventory.");
+    }
+
+    public EditResult ApplyCard(int index, int typeId, byte arrows, int attack, int attackType,
+        int physicalDefense, int magicDefense)
+    {
+        if ((uint)typeId >= GameData.CardTypeNames.Count)
+            return EditResult.Rejected("Pick a Tetra Master card type first.");
+        if (attack is < 0 or > byte.MaxValue || physicalDefense is < 0 or > byte.MaxValue ||
+            magicDefense is < 0 or > byte.MaxValue)
+            return EditResult.Rejected("Card attack and defense must be whole numbers from 0 to 255.");
+        if ((uint)attackType > 3)
+            return EditResult.Rejected("Card class must be P, M, X, or A.");
+
+        return EditSlot(
+            slot => slot.SetCard(index, (byte)typeId, arrows, (byte)attack, (byte)attackType,
+                (byte)physicalDefense, (byte)magicDefense),
+            $"Updated card {index}.");
+    }
+
+    public EditResult SetCardRecord(int wins, int losses, int draws)
+    {
+        if (wins is < 0 or > ushort.MaxValue || losses is < 0 or > ushort.MaxValue ||
+            draws is < 0 or > ushort.MaxValue)
+            return EditResult.Rejected("Card record values must be whole numbers from 0 to 65,535.");
+
+        return EditSlot(slot => slot.SetCardRecord(wins, losses, draws), "Updated Tetra Master record.");
+    }
+
+    public EditResult RemoveCard(int index) => EditSlot(
+        slot => slot.SetCard(index, GameData.NoCardType, 0, 0, 0, 0, 0),
+        $"Removed card {index}.");
+
+    public EditResult AddCard() => EditSlot(slot =>
+    {
+        int index = FindEmptyCardIndex(slot);
+        if (index < 0)
+            throw new InvalidOperationException("No empty Tetra Master card slots remain.");
+        slot.SetCard(index, 0, 0xFF, 255, 3, 255, 255);
+    }, "Added a maxed Tetra Master card.");
+
     private EditResult EditSlot(Action<IEditableSlot> operation, string label)
     {
         ArgumentNullException.ThrowIfNull(operation);
@@ -263,6 +321,18 @@ public sealed class FfixWorkspace
         ? quantity
         : throw new ArgumentException("quantity must be a whole number from 1 to 99.");
 
+    private static int FindEmptyCardIndex(IEditableSlot slot)
+    {
+        HashSet<int> occupied = slot.Cards().Select(card => card.Index).ToHashSet();
+        for (int index = 0; index < slot.CardSlotCount; index++)
+        {
+            if (!occupied.Contains(index))
+                return index;
+        }
+
+        return slot.Format == SaveFormat.Memoria ? slot.CardSlotCount : -1;
+    }
+
     private static string? ActualField(IEditableCharacter character, string requested)
     {
         if (character.Has(requested)) return requested;
@@ -281,6 +351,8 @@ public sealed record CharacterDraft(
     string Name,
     IReadOnlyDictionary<string, string> Numbers,
     IReadOnlyDictionary<string, string> Equipment);
+
+public sealed record InventoryRowDraft(int SlotIndex, string Token, int Quantity);
 
 public sealed record EditResult(bool Success, string Message)
 {

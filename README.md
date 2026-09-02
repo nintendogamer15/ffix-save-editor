@@ -17,8 +17,8 @@ The editor detects and validates the format, lists occupied saves, and preserves
 - View and edit character names, level, EXP, HP, MP, base stats, and equipment.
 - Max one character or every recruited character.
 - View and edit gil.
-- View inventory and add any of the 256 known item/gear IDs.
-- View Tetra Master cards and the win/loss/draw record.
+- View and edit inventory identities and quantities, add any of the 256 known item/gear IDs, and remove entries.
+- View and edit Tetra Master cards (type, attack, class, defenses, arrows) and the win/loss/draw record.
 - Edit all 64 support-ability bits in PS1 saves.
 - Repair the PS1 CRC automatically after edits.
 - Decrypt and re-encrypt vanilla rr2016 slots while preserving reserved container data.
@@ -107,7 +107,6 @@ do not save while another process is moving or replacing the save path.
 ## Limitations
 
 - rr2016 support targets the known vanilla fixed-key container. Saves using a modded/newer encryption scheme are rejected rather than guessed at.
-- Tetra Master cards are displayed but not edited by the interfaces.
 - rr2016 ability/AP records and Memoria `sa_extended` support-ability data remain unknown and are not edited.
 - Memoria mod item IDs are preserved and displayed in full, but names unavailable in the vanilla table are shown as numeric IDs because the save does not contain the mod's item-name catalog.
 

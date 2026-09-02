@@ -77,6 +77,57 @@ public sealed class WorkspaceTests
         Assert.Equal(edited, harness.Session.Document!.ToArray());
     }
 
+    [Theory]
+    [InlineData(SaveFormat.Legacy)]
+    [InlineData(SaveFormat.Rr2016)]
+    [InlineData(SaveFormat.Memoria)]
+    public async Task ApplyInventoryAndCardsCommitThroughClonesAndSupportUndo(SaveFormat format)
+    {
+        await using Harness harness = await Harness.OpenAsync(format);
+        FfixWorkspace workspace = harness.Workspace;
+        byte[] original = harness.Session.Document!.ToArray();
+
+        Assert.True(workspace.AddItem("Potion", 40).Success);
+        InventoryItem potion = Assert.Single(workspace.CurrentSlot!.Items(), item => item.Name == "Potion");
+        Assert.Equal(40, potion.Quantity);
+
+        Assert.True(workspace.ApplyInventory([new InventoryRowDraft(potion.SlotIndex, "Potion", 10)]).Success);
+        InventoryItem lowered = Assert.Single(workspace.CurrentSlot.Items(), item => item.SlotIndex == potion.SlotIndex);
+        Assert.Equal((GameData.ResolveItemId("Potion"), 10), (lowered.ItemId, lowered.Quantity));
+
+        Assert.True(workspace.ApplyInventory([new InventoryRowDraft(lowered.SlotIndex, "Ragnarok", 5)]).Success);
+        InventoryItem swapped = Assert.Single(workspace.CurrentSlot.Items(), item => item.SlotIndex == lowered.SlotIndex);
+        Assert.Equal((29, 5, "Ragnarok"), (swapped.ItemId, swapped.Quantity, swapped.Name));
+
+        Assert.True(workspace.ApplyInventory([new InventoryRowDraft(swapped.SlotIndex, "Ragnarok", 0)]).Success);
+        Assert.DoesNotContain(workspace.CurrentSlot.Items(), item => item.SlotIndex == swapped.SlotIndex);
+        Assert.DoesNotContain(workspace.CurrentSlot.Items(), item => item.ItemId == 29);
+
+        Assert.False(workspace.ApplyInventory([new InventoryRowDraft(0, "   ", 3)]).Success);
+
+        Assert.True(workspace.ApplyCard(0, 1, 0xFF, 42, 3, 11, 22).Success);
+        CardInfo card = workspace.CurrentSlot.Cards().Single(entry => entry.Index == 0);
+        Assert.Equal(1, card.TypeId);
+        Assert.Equal("Fang", card.TypeName);
+        Assert.Equal(0xFF, card.Arrows);
+        Assert.Equal(42, card.Attack);
+        Assert.Equal(3, card.AttackType);
+        Assert.Equal('A', card.AttackTypeName);
+        Assert.Equal(11, card.PhysicalDefense);
+        Assert.Equal(22, card.MagicDefense);
+
+        Assert.True(workspace.SetCardRecord(12, 34, 56).Success);
+        Assert.Equal((12, 34, 56), workspace.CurrentSlot.CardRecord);
+
+        byte[] edited = harness.Session.Document!.ToArray();
+        Assert.NotEqual(original, edited);
+        Assert.True(harness.History.IsDirty);
+        harness.Session.Undo();
+        Assert.NotEqual(edited, harness.Session.Document!.ToArray());
+        harness.Session.Redo();
+        Assert.Equal(edited, harness.Session.Document!.ToArray());
+    }
+
     [Fact]
     public async Task InvalidEditLeavesAllBytesAndHistoryUnchangedAndPendingIsReported()
     {
