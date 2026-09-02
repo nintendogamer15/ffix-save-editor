@@ -71,9 +71,13 @@ public interface IEditableSlot
     IEditableCharacter Character(int index);
     IReadOnlyList<InventoryItem> Items();
     bool SetItem(int itemId, int count);
+    bool ReplaceItemAt(int slotIndex, int itemId, int count);
     void RemoveItem(int itemId);
     IReadOnlyList<CardInfo> Cards();
+    void SetCard(int index, byte typeId, byte arrows, byte attack, byte attackType, byte physicalDefense, byte magicDefense);
+    void SetCardRecord(int wins, int losses, int draws);
     (int Wins, int Losses, int Draws) CardRecord { get; }
+    int CardSlotCount { get; }
     IEditableSlot Clone();
     void FinalizeEdits();
 }

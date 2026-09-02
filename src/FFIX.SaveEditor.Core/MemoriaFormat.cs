@@ -390,6 +390,43 @@ public sealed class MemoriaSlot : IEditableSlot
         return true;
     }
 
+    public bool ReplaceItemAt(int slotIndex, int itemId, int count)
+    {
+        var items = Common.Get("items");
+        if (items?.Kind != MemoriaValueKind.Array)
+        {
+            items = MemoriaValue.Array();
+            Common.Set("items", items);
+        }
+        var bounded = Math.Clamp(count, 0, 99);
+        if (bounded == 0)
+        {
+            if ((uint)slotIndex < items.ArrayItems.Count)
+                items.ArrayItems.RemoveAt(slotIndex);
+            return true;
+        }
+        if (itemId < 0)
+            throw new ArgumentOutOfRangeException(nameof(itemId), "Memoria item IDs cannot be negative.");
+        if (slotIndex == items.ArrayItems.Count)
+        {
+            items.ArrayItems.Add(MemoriaValue.Dictionary([
+                new("id", MemoriaValue.Int32(itemId)), new("count", MemoriaValue.Int32(bounded))]));
+            return true;
+        }
+        if ((uint)slotIndex >= items.ArrayItems.Count)
+            throw new ArgumentOutOfRangeException(nameof(slotIndex));
+        var entry = items.ArrayItems[slotIndex];
+        if (entry.Kind != MemoriaValueKind.Dictionary)
+        {
+            items.ArrayItems[slotIndex] = MemoriaValue.Dictionary([
+                new("id", MemoriaValue.Int32(itemId)), new("count", MemoriaValue.Int32(bounded))]);
+            return true;
+        }
+        SetNumber(entry, "id", itemId);
+        SetNumber(entry, "count", bounded);
+        return true;
+    }
+
     public void RemoveItem(int itemId) => SetItem(itemId, 0);
 
     public int Gil
@@ -405,12 +442,73 @@ public sealed class MemoriaSlot : IEditableSlot
 
     public IReadOnlyList<CardInfo> Cards()
     {
-        var cards = _root.Get("30000_MiniGame")?.Get("MiniGameCard");
-        if (cards?.Kind != MemoriaValueKind.Array) return [];
-        return cards.ArrayItems.Where(x => x.Get("type")?.AsInt(0xFF) < GameData.CardTypeNames.Count)
-            .Select(x => new CardInfo(x.Get("id")?.AsInt() ?? 0, (byte)(x.Get("type")?.AsInt(0xFF) ?? 0xFF),
-                (byte)(x.Get("arrow")?.AsInt() ?? 0), (byte)(x.Get("atk")?.AsInt() ?? 0), 0,
-                (byte)(x.Get("pdef")?.AsInt() ?? 0), (byte)(x.Get("mdef")?.AsInt() ?? 0))).ToArray();
+        var cards = MiniGameCards;
+        if (cards is null) return [];
+        return cards.ArrayItems.Select((entry, index) => new CardInfo(
+                index,
+                (byte)(entry.Get("id")?.AsInt(GameData.NoCardType) ?? GameData.NoCardType),
+                (byte)(entry.Get("arrow")?.AsInt() ?? 0),
+                (byte)(entry.Get("atk")?.AsInt() ?? 0),
+                (byte)(entry.Get("type")?.AsInt() ?? 0),
+                (byte)(entry.Get("pdef")?.AsInt() ?? 0),
+                (byte)(entry.Get("mdef")?.AsInt() ?? 0)))
+            .Where(card => card.TypeId < GameData.CardTypeNames.Count)
+            .ToArray();
+    }
+
+    public int CardSlotCount => MiniGameCards?.ArrayItems.Count ?? 0;
+
+    public void SetCard(int index, byte typeId, byte arrows, byte attack, byte attackType, byte physicalDefense, byte magicDefense)
+    {
+        if (typeId >= GameData.CardTypeNames.Count)
+        {
+            var existing = MiniGameCards;
+            if (existing is not null && (uint)index < existing.ArrayItems.Count)
+                existing.ArrayItems.RemoveAt(index);
+            return;
+        }
+
+        var cards = EnsureMiniGameCards();
+        if (index < 0 || index > cards.ArrayItems.Count)
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        var boundedType = (byte)(attackType & 0x03);
+        if (index == cards.ArrayItems.Count)
+        {
+            cards.ArrayItems.Add(NewCard(typeId, boundedType, attack, physicalDefense, magicDefense, arrows));
+            return;
+        }
+
+        var entry = cards.ArrayItems[index];
+        if (entry.Kind != MemoriaValueKind.Dictionary)
+        {
+            cards.ArrayItems[index] = NewCard(typeId, boundedType, attack, physicalDefense, magicDefense, arrows);
+            return;
+        }
+
+        SetNumber(entry, "id", typeId);
+        SetNumber(entry, "type", boundedType);
+        SetNumber(entry, "atk", attack);
+        SetNumber(entry, "pdef", physicalDefense);
+        SetNumber(entry, "mdef", magicDefense);
+        SetNumber(entry, "arrow", arrows);
+        if (entry.Get("side") is null)
+            entry.Set("side", MemoriaValue.Int32(0));
+        if (entry.Get("cpoint") is null)
+            entry.Set("cpoint", MemoriaValue.Int32(10));
+    }
+
+    public void SetCardRecord(int wins, int losses, int draws)
+    {
+        var mini = _root.Get("30000_MiniGame");
+        if (mini?.Kind != MemoriaValueKind.Dictionary)
+        {
+            mini = MemoriaValue.Dictionary();
+            _root.Set("30000_MiniGame", mini);
+        }
+        SetNumber(mini, "sWin", ClampCardRecord(wins));
+        SetNumber(mini, "sLose", ClampCardRecord(losses));
+        SetNumber(mini, "sDraw", ClampCardRecord(draws));
     }
 
     public (int Wins, int Losses, int Draws) CardRecord
@@ -420,6 +518,55 @@ public sealed class MemoriaSlot : IEditableSlot
             var mini = _root.Get("30000_MiniGame");
             return (mini?.Get("sWin")?.AsInt() ?? 0, mini?.Get("sLose")?.AsInt() ?? 0, mini?.Get("sDraw")?.AsInt() ?? 0);
         }
+    }
+
+    private MemoriaValue? MiniGameCards
+    {
+        get
+        {
+            var cards = _root.Get("30000_MiniGame")?.Get("MiniGameCard");
+            return cards?.Kind == MemoriaValueKind.Array ? cards : null;
+        }
+    }
+
+    private MemoriaValue EnsureMiniGameCards()
+    {
+        var mini = _root.Get("30000_MiniGame");
+        if (mini?.Kind != MemoriaValueKind.Dictionary)
+        {
+            mini = MemoriaValue.Dictionary();
+            _root.Set("30000_MiniGame", mini);
+        }
+        var cards = mini.Get("MiniGameCard");
+        if (cards?.Kind != MemoriaValueKind.Array)
+        {
+            cards = MemoriaValue.Array();
+            mini.Set("MiniGameCard", cards);
+        }
+        return cards;
+    }
+
+    private static int ClampCardRecord(int value) => Math.Clamp(value, 0, ushort.MaxValue);
+
+    private static MemoriaValue NewCard(byte typeId, byte attackType, byte attack, byte physicalDefense, byte magicDefense, byte arrows) =>
+        MemoriaValue.Dictionary([
+            new("id", MemoriaValue.Int32(typeId)),
+            new("type", MemoriaValue.Int32(attackType)),
+            new("atk", MemoriaValue.Int32(attack)),
+            new("pdef", MemoriaValue.Int32(physicalDefense)),
+            new("mdef", MemoriaValue.Int32(magicDefense)),
+            new("arrow", MemoriaValue.Int32(arrows)),
+            new("side", MemoriaValue.Int32(0)),
+            new("cpoint", MemoriaValue.Int32(10)),
+        ]);
+
+    private static void SetNumber(MemoriaValue dictionary, string key, int value)
+    {
+        var existing = dictionary.Get(key);
+        if (existing is not null && existing.Kind is MemoriaValueKind.Int32 or MemoriaValueKind.Double)
+            existing.SetNumberPreservingKind(value);
+        else
+            dictionary.Set(key, MemoriaValue.Int32(value));
     }
 
     public IEditableSlot Clone() => new MemoriaSlot(_root.Clone());

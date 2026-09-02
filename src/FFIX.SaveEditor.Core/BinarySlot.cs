@@ -205,6 +205,24 @@ public sealed class BinarySlot : IEditableSlot
         return false;
     }
 
+    public bool ReplaceItemAt(int slotIndex, int itemId, int count)
+    {
+        if ((uint)slotIndex >= _itemCount) throw new ArgumentOutOfRangeException(nameof(slotIndex));
+        if (itemId is < byte.MinValue or > byte.MaxValue)
+            throw new ArgumentOutOfRangeException(nameof(itemId), "PS1 and rr2016 item IDs must be between 0 and 255.");
+        var offset = _itemStart + slotIndex * 2;
+        var bounded = (byte)Math.Clamp(count, 0, 99);
+        if (bounded == 0 || itemId == GameData.EmptyItemId)
+        {
+            _data[offset + ItemIdByte] = GameData.EmptyItemId;
+            _data[offset + ItemCountByte] = 0;
+            return true;
+        }
+        _data[offset + ItemIdByte] = (byte)itemId;
+        _data[offset + ItemCountByte] = bounded;
+        return true;
+    }
+
     public void RemoveItem(int itemId) => SetItem(itemId, 0);
 
     // The PS1 FF9ITEM record is [id, count]. The 2016 serializer writes the
@@ -270,6 +288,18 @@ public sealed class BinarySlot : IEditableSlot
         _data[offset + _cardLayout[3]] = (byte)(attackType & 0x03);
         _data[offset + _cardLayout[4]] = physicalDefense;
         _data[offset + _cardLayout[5]] = magicDefense;
+    }
+
+    public int CardSlotCount => _cardCount;
+
+    public void SetCardRecord(int wins, int losses, int draws)
+    {
+        var winField = Format == SaveFormat.Legacy ? SaveLayout.LegacyCardWins : SaveLayout.RrCardWins;
+        var lossField = Format == SaveFormat.Legacy ? SaveLayout.LegacyCardLosses : SaveLayout.RrCardLosses;
+        var drawField = Format == SaveFormat.Legacy ? SaveLayout.LegacyCardDraws : SaveLayout.RrCardDraws;
+        BinarySave.SetField(_data, 0, winField, wins);
+        BinarySave.SetField(_data, 0, lossField, losses);
+        BinarySave.SetField(_data, 0, drawField, draws);
     }
 
     public (int Wins, int Losses, int Draws) CardRecord

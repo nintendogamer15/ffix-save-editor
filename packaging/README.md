@@ -11,7 +11,7 @@ scripts/build-rpm-package.sh v0.3.4 /path/to/FFIXSaveEditor-v0.3.4-linux-x64 /tm
 
 The Arch helper must run as a non-root user with `makepkg`, `desktop-file-validate`, and `appstreamcli` available. The RPM helper requires `rpmbuild`, `desktop-file-install`, and `appstreamcli`. CI builds each format in its native distribution container. The narrow `rpmlintrc` exceptions document single-file dependencies that RPM cannot discover automatically; CI separately verifies them with a clean installation, `ldd`, and an Xvfb launch.
 
-Installed files include `/usr/bin/ffix-save-editor`, a desktop entry, a 256-pixel hicolor icon, AppStream metadata, the MIT license, and `NOTICES.md`.
+Installed files include `/usr/bin/ffix-save-editor`, a desktop entry, a 256-pixel hicolor icon, AppStream metadata, the MIT license, `NOTICES.md`, and the SaveEditor.Ui and CommunityToolkit.Mvvm third-party licence texts under the package licence directory.
 
 On a `v*` tag, Gitea Actions publishes packages to:
 

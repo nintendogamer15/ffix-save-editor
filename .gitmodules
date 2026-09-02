@@ -1,0 +1,3 @@
+[submodule "external/save-editor-gui-framework"]
+	path = external/save-editor-gui-framework
+	url = https://github.com/nintendogamer15/save-editor-gui-framework

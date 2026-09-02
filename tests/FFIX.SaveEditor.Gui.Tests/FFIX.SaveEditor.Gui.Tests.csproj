@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <OutputType>Exe</OutputType>
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
+    <SelfContained>true</SelfContained>
+    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Headless.XUnit" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Skia" Version="12.1.1" />
+    <PackageReference Include="xunit.v3" Version="3.2.2" />
+    <ProjectReference Include="../../src/FFIX.SaveEditor.Gui/FFIX.SaveEditor.Gui.csproj" />
+    <ProjectReference Include="../../src/FFIX.SaveEditor.Core/FFIX.SaveEditor.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup><Using Include="Xunit" /></ItemGroup>
+  <ItemGroup>
+    <None Include="../../examples/SavedData_ww_Memoria_0_0.dat" Link="Fixtures/SavedData_ww_Memoria_0_0.dat"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

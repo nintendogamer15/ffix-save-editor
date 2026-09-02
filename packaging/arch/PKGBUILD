@@ -34,6 +34,8 @@ source=(
   'icon.png'
   'LICENSE'
   'NOTICES.md'
+  'SaveEditor.Ui-0BSD.txt'
+  'CommunityToolkit.Mvvm-MIT.txt'
 )
 sha256sums=(
   'SKIP'
@@ -41,7 +43,9 @@ sha256sums=(
   '5fe027dcd1c5a22858745458379afdd346b7e826c48af349b5af79d4effa83ef'
   'f8328429abb28cee2d870cad37d4c1dc639436b05ae2951abde815ada0be539e'
   'f30f9e9bea06080651848e2710a13de4b816f1bf8ae397c052449f8dfd9d49e6'
-  '49a28973365a7c2b40b5094a966a6be8c364414ac64c02362f65872b9a0936df'
+  'a8af82ec9cef286705813e5de8a0a366491511207fc0b642619c3c2ba7a7504f'
+  '14dab3ea11600f9c74f960295eee498015959606e6e7d18c8135512acb3a751d'
+  '1e1101b893f295b4526da2c167e4234610f1078e2fe43a0e814c1a883656877b'
 )
 
 check() {
@@ -59,4 +63,8 @@ package() {
     "${pkgdir}/usr/share/metainfo/io.github.nintendogamer15.FFIXSaveEditor.metainfo.xml"
   install -Dm0644 "${srcdir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
   install -Dm0644 "${srcdir}/NOTICES.md" "${pkgdir}/usr/share/doc/${pkgname}/NOTICES.md"
+  install -Dm0644 "${srcdir}/SaveEditor.Ui-0BSD.txt" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/LICENSES/SaveEditor.Ui-0BSD.txt"
+  install -Dm0644 "${srcdir}/CommunityToolkit.Mvvm-MIT.txt" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/LICENSES/CommunityToolkit.Mvvm-MIT.txt"
 }

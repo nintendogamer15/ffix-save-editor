@@ -1,323 +1,463 @@
 // SPDX-License-Identifier: MIT
 using Avalonia;
+using Avalonia.Automation;
 using Avalonia.Controls;
-using Avalonia.Interactivity;
-using Avalonia.Platform.Storage;
-using Avalonia.Styling;
+using Avalonia.Layout;
+using Avalonia.Markup.Xaml;
 using FFIX.SaveEditor.Core;
-using FFIX.SaveEditor.Gui.ViewModels;
+using FFIX.SaveEditor.Gui.Editing;
+using FFIX.SaveEditor.Gui.Saves;
+using SaveEditor.Ui.Codecs;
+using SaveEditor.Ui.Dialogs;
+using SaveEditor.Ui.Editing;
+using SaveEditor.Ui.Hosting;
+using SaveEditor.Ui.Settings;
+using SaveEditor.Ui.Shell;
+using SaveEditor.Ui.Theming;
+using SaveEditor.Ui.Workflow;
 
 namespace FFIX.SaveEditor.Gui;
 
-public sealed partial class MainWindow : Window
+public sealed partial class MainWindow : Window, IDisposable
 {
-    private readonly MainWindowViewModel _viewModel = new();
-    private SaveDocument? _document;
-    private IEditableSlot? _slot;
-    private string? _savePath;
+    private readonly string? initialPath;
+    private readonly EditHistory history = new();
+    private readonly DocumentSession<SaveDocument> session;
+    private readonly FfixWorkspace workspace;
+    private readonly EditorShellViewModel viewModel;
+    private readonly ThemeController theme;
+    private readonly Dictionary<string, ContentControl> sectionHosts = [];
+    private bool disposed;
+    private bool initialized;
 
-    public MainWindow() : this(null) { }
+    public MainWindow() : this(null, null) { }
 
-    public MainWindow(string? initialPath)
+    public MainWindow(string? initialPath) : this(initialPath, null) { }
+
+    public MainWindow(string? initialPath, EditorSettingsStoreOptions? settingsOptions)
     {
-        InitializeComponent();
-        DataContext = _viewModel;
+        this.initialPath = initialPath;
+        AvaloniaXamlLoader.Load(this);
+
+        EditorSettingsStore settings = new(EditorApplicationId.Parse("FFIXSaveEditor"), settingsOptions);
+        theme = new ThemeController(
+            Application.Current!.Styles.OfType<SaveEditorTheme>().Single(),
+            settings,
+            CatppuccinAccent.Mauve);
+        WindowEditorHost host = new(this);
+        ThemedUserInteraction interaction = new(this, global::SaveEditor.Ui.Display.PathDisplayFormatter.Default);
+
+        FfixSaveCodec codec = new();
+        SaveCodecRegistry<SaveDocument> registry = new(
+        [
+            new CodecRegistration<SaveDocument>(new FfixSaveDetector(), codec),
+        ]);
+        SafeFileWorkflow<SaveDocument> workflow = new(new SafeFileWorkflowOptions<SaveDocument>
+        {
+            Registry = registry,
+            Interaction = interaction,
+            DocumentComparer = FfixDocumentComparer.Instance,
+            MaxBytes = FfixSaveCodec.MaximumBytes,
+            ConfirmAboveBytes = FfixSaveCodec.MaximumBytes,
+            MaxSerializedBytes = FfixSaveCodec.MaximumBytes,
+        });
+
+        session = new DocumentSession<SaveDocument>(workflow, history, codec);
+        workspace = new FfixWorkspace(session, history);
+        session.PendingEditProbe = () => workspace.HasPendingEdits;
+        session.DocumentChanged += (_, _) => workspace.BindDocument();
+        workspace.Changed += (_, _) => RefreshBodies();
+
+        viewModel = new EditorShellViewModel(session, interaction, settings, host, theme)
+        {
+            AboutMessage = EmbeddedLegalNotices.Load(),
+            SafetyMessage =
+                "Save As is the default write path. Overwrite + Backup verifies a backup and " +
+                "checks the retained file before replacement. Symlinks and ordinary external " +
+                "content changes are refused.\n\nThese safeguards do not eliminate a concurrent " +
+                "replacement of the final pathname or one of its ancestor directories after the " +
+                "last retained-file check. Do not save while another process is moving or replacing " +
+                "the save path. Codecs run in-process and are not sandboxed.",
+        };
+
+        RegisterSections();
+        EditorShell shell = this.FindControl<EditorShell>("Shell")!;
+        shell.DataContext = viewModel;
+        DragDropAdapter.Attach(shell, viewModel);
+
+        Closed += (_, _) => Dispose();
+        Loaded += async (_, _) => await InitializeAsync().ConfigureAwait(true);
+    }
+
+    public EditorShellViewModel ViewModel => viewModel;
+    public FfixWorkspace Workspace => workspace;
+
+    public async ValueTask InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        if (initialized) return;
+        initialized = true;
+        await theme.InitializeAsync(cancellationToken).ConfigureAwait(true);
+        await viewModel.InitializeAsync(cancellationToken).ConfigureAwait(true);
         if (!string.IsNullOrWhiteSpace(initialPath))
+            await viewModel.OpenPathAsync(initialPath, cancellationToken).ConfigureAwait(true);
+    }
+
+    public void Dispose()
+    {
+        if (disposed) return;
+        disposed = true;
+        viewModel.Dispose();
+        session.Dispose();
+        GC.SuppressFinalize(this);
+    }
+
+    private void RegisterSections()
+    {
+        viewModel.RegisterSections(
+        [
+            Section("overview", "Overview", "Slot summary and common save actions"),
+            Section("characters", "Characters", "Names, stats, equipment and maximization"),
+            Section("support-abilities", "PS1 Support Abilities", "The 64 legacy support-ability bits"),
+            Section("inventory", "Inventory", "Items and gear in the selected save"),
+            Section("cards", "Tetra Master Cards", "Card collection and match record"),
+        ]);
+        RefreshBodies();
+    }
+
+    private SectionDescriptor Section(string key, string title, string subtitle)
+    {
+        ContentControl host = new();
+        sectionHosts[key] = host;
+        return new SectionDescriptor
         {
-            PathBox.Text = initialPath;
-            Open(initialPath);
+            Key = key,
+            Title = title,
+            Subtitle = subtitle,
+            BodyMode = SectionBodyMode.Custom,
+            Body = host,
+        };
+    }
+
+    private void RefreshBodies()
+    {
+        if (sectionHosts.Count == 0) return;
+        sectionHosts["overview"].Content = BuildOverview();
+        sectionHosts["characters"].Content = BuildCharacters();
+        sectionHosts["support-abilities"].Content = BuildAbilities();
+        sectionHosts["inventory"].Content = BuildInventory();
+        sectionHosts["cards"].Content = BuildCards();
+    }
+
+    private Control BuildOverview()
+    {
+        StackPanel panel = Panel();
+        ComboBox slots = new()
+        {
+            ItemsSource = workspace.Slots.Select(reference => $"{reference.Label} — {reference.Summary}").ToArray(),
+            SelectedIndex = workspace.SelectedSlotIndex,
+            PlaceholderText = "Open a save to select an occupied slot",
+        };
+        slots.SelectionChanged += (_, _) =>
+        {
+            if (slots.SelectedIndex >= 0) workspace.SelectSlot(slots.SelectedIndex);
+        };
+        panel.Children.Add(Label("Save slot"));
+        panel.Children.Add(slots);
+        panel.Children.Add(new TextBlock { Text = workspace.Overview, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+
+        IEditableSlot? slot = workspace.CurrentSlot;
+        TextBox gil = Input(slot?.Gil.ToString() ?? string.Empty, "Gil");
+        panel.Children.Add(Row(Label("Gil"), gil, Button("Apply gil", () => workspace.SetGil(gil.Text ?? string.Empty))));
+        panel.Children.Add(Row(
+            Button("Max selected character", workspace.MaxSelected),
+            Button("Max all recruited characters", workspace.MaxAll),
+            Button("Give all items and gear", () => workspace.GiveAllItems(99))));
+
+        ComboBox known = new() { ItemsSource = GameData.ItemNames, PlaceholderText = "Pick an item or gear…" };
+        TextBox item = Input(string.Empty, "Name, decimal ID, or 0xID");
+        known.SelectionChanged += (_, _) => { if (known.SelectedItem is string name) item.Text = name; };
+        Control quantity = Numeric(99, 1, 99, "Add-item quantity", out TextBox quantityBox);
+        panel.Children.Add(Label("Add item / gear"));
+        panel.Children.Add(known);
+        panel.Children.Add(Row(item, quantity, Button("Add", () => workspace.AddItem(item.Text ?? string.Empty, ParseWholeNumber(quantityBox.Text)))));
+        return Scroll(panel);
+    }
+
+    private Control BuildCharacters()
+    {
+        StackPanel panel = Panel();
+        IReadOnlyList<IEditableCharacter> characters = workspace.CurrentSlot?.Characters() ?? [];
+        ComboBox picker = new()
+        {
+            ItemsSource = characters.Select(character => $"{character.Index}: {character.Name}" + (character.IsRecruited ? string.Empty : " (not recruited)")).ToArray(),
+            SelectedIndex = workspace.SelectedCharacterIndex,
+        };
+        picker.SelectionChanged += (_, _) =>
+        {
+            if (picker.SelectedIndex < 0 || picker.SelectedIndex == workspace.SelectedCharacterIndex)
+                return;
+            workspace.SelectCharacter(picker.SelectedIndex);
+            sectionHosts["characters"].Content = BuildCharacters();
+            sectionHosts["support-abilities"].Content = BuildAbilities();
+        };
+        panel.Children.Add(picker);
+
+        IEditableCharacter? character = workspace.CurrentCharacter;
+        if (character is null) return Scroll(panel);
+
+        TextBox name = Input(character.Name, "Name");
+        panel.Children.Add(Row(Label("Name"), name));
+        Dictionary<string, TextBox> numbers = [];
+        foreach ((string field, string label) in CharacterFields)
+        {
+            string? actual = character.Has(field) ? field : character.Has(field + "_base") ? field + "_base" : null;
+            if (actual is null) continue;
+            TextBox box = Input(character.Get(actual).ToString(), label);
+            numbers[field] = box;
+            panel.Children.Add(Row(Label(label), box));
         }
-    }
 
-    private async void BrowseInput(object? sender, RoutedEventArgs e)
-    {
-        var files = await StorageProvider.OpenFilePickerAsync(new()
+        Dictionary<string, TextBox> equipment = [];
+        foreach (string field in SaveLayout.EquipmentSlots)
         {
-            Title = "Open Final Fantasy IX save",
-            AllowMultiple = false,
-            FileTypeFilter =
-            [
-                new("FFIX saves") { Patterns = ["*.dat", "*.sav", "*.mcr", "*.mcd", "*.bin", "*.mc", "*.mci", "*.ps", "*.psm", "*.dff", "*.ps1", "*.mcs"] },
-                FilePickerFileTypes.All,
-            ],
-        });
-        var path = files.FirstOrDefault()?.Path.LocalPath;
-        if (path is not null)
-        {
-            PathBox.Text = path;
-            Open(path);
-        }
-    }
-
-    private void LoadFile(object? sender, RoutedEventArgs e) => Open(PathBox.Text);
-
-    private void ToggleTheme(object? sender, RoutedEventArgs e)
-    {
-        if (Application.Current is { } application)
-            application.RequestedThemeVariant = application.ActualThemeVariant == ThemeVariant.Dark
-                ? ThemeVariant.Light : ThemeVariant.Dark;
-    }
-
-    private void Open(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            Error("Choose a save file before loading.");
-            return;
+            if (!character.Has(field)) continue;
+            TextBox box = Input(character.Get(field).ToString(), field);
+            equipment[field] = box;
+            panel.Children.Add(Row(Label(ToTitle(field)), box));
         }
 
-        try
+        panel.Children.Add(Button("Apply character", () => workspace.ApplyCharacter(new CharacterDraft(
+            name.Text ?? string.Empty,
+            numbers.ToDictionary(pair => pair.Key, pair => pair.Value.Text ?? string.Empty),
+            equipment.ToDictionary(pair => pair.Key, pair => pair.Value.Text ?? string.Empty)))));
+        return Scroll(panel);
+    }
+
+    private Control BuildAbilities()
+    {
+        StackPanel panel = Panel();
+        IEditableCharacter? character = workspace.CurrentCharacter;
+        if (character is null)
         {
-            var fullPath = Path.GetFullPath(path.Trim());
-            var candidate = SaveDocument.Open(fullPath);
-            var references = candidate.ListSlots();
-            if (references.Count == 0) throw new SaveFormatException("The file contains no occupied FFIX save slots.");
-            _document = candidate;
-            _savePath = fullPath;
-            PathBox.Text = fullPath;
-            OutputBox.Text = DefaultOutput(fullPath);
-            _viewModel.LoadSlots(candidate);
-            LoadSelectedSlot();
-            _viewModel.AppendLog($"Loaded {fullPath}: {SaveDocument.FormatLabel(candidate.Format)}, {references.Count} occupied save(s).");
+            panel.Children.Add(Label("Open a save and select a character."));
+            return Scroll(panel);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SaveFormatException
-                                          or ArgumentException or NotSupportedException)
+        if (!workspace.CanEditSupportAbilities)
         {
-            Error($"Could not open save: {exception.Message}");
+            panel.Children.Add(Label("Support-ability editing is available only for PS1 saves."));
+            return Scroll(panel);
         }
-    }
 
-    private void SlotChanged(object? sender, SelectionChangedEventArgs e)
-    {
-        if (_document is not null && _viewModel.SelectedSlot is not null) LoadSelectedSlot();
-    }
-
-    private void LoadSelectedSlot(int? selectedCharacter = null)
-    {
-        if (_document is null || _viewModel.SelectedSlot is null) return;
-        _slot = _document.LoadSlot(_viewModel.SelectedSlot.Reference);
-        _viewModel.LoadSlot(_viewModel.SelectedSlot.Reference, _slot);
-        if (selectedCharacter is not null)
+        HashSet<int> enabled = character.SupportAbilities().ToHashSet();
+        List<CheckBox> checks = [];
+        for (int index = 0; index < GameData.SupportAbilityNames.Count; index++)
         {
-            var row = _viewModel.Characters.FirstOrDefault(x => x.Index == selectedCharacter);
-            if (row is not null) _viewModel.SelectedCharacter = row;
+            CheckBox check = new() { Content = $"{index}: {GameData.SupportAbilityNames[index]}", IsChecked = enabled.Contains(index) };
+            check.Click += (_, _) => workspace.SetPendingEdits(true);
+            checks.Add(check);
+            panel.Children.Add(check);
         }
-        LoadCharacterEditor();
-        GilBox.Text = _slot.Gil.ToString();
+        panel.Children.Add(Button("Apply support abilities", () => workspace.ApplySupportAbilities(
+            checks.Select((check, index) => (check, index)).Where(pair => pair.check.IsChecked == true).Select(pair => pair.index).ToArray())));
+        return Scroll(panel);
     }
 
-    private void CharacterChanged(object? sender, SelectionChangedEventArgs e) => LoadCharacterEditor();
-
-    private void LoadCharacterEditor()
+    private Control BuildInventory()
     {
-        if (_slot is null || _viewModel.SelectedCharacter is null)
+        StackPanel panel = Panel();
+        List<(int SlotIndex, TextBox Token, TextBox Quantity)> rows = [];
+        foreach (InventoryItem item in workspace.CurrentSlot?.Items() ?? [])
         {
-            _viewModel.LoadAbilities(null);
-            return;
+            ComboBox known = new() { ItemsSource = GameData.ItemNames, PlaceholderText = "Pick an item or gear…" };
+            TextBox token = Input(item.Name, "Name, decimal ID, or 0xID");
+            if ((uint)item.ItemId < GameData.ItemNames.Count)
+                known.SelectedIndex = item.ItemId;
+            known.SelectionChanged += (_, _) => { if (known.SelectedItem is string name) token.Text = name; };
+            Control quantity = Numeric(item.Quantity, 0, 99, $"Quantity for slot {item.SlotIndex}", out TextBox quantityBox);
+            int slotIndex = item.SlotIndex;
+            panel.Children.Add(Label($"{slotIndex}: {item.Name} — {item.Quantity}"));
+            panel.Children.Add(known);
+            panel.Children.Add(Row(token, quantity, Button("Remove", () => workspace.ApplyInventory(
+                [new InventoryRowDraft(slotIndex, token.Text ?? string.Empty, 0)]))));
+            rows.Add((slotIndex, token, quantityBox));
         }
-        var character = _slot.Character(_viewModel.SelectedCharacter.Index);
-        NameBox.Text = character.Name;
-        SetText(LevelBox, character, "level");
-        SetText(ExperienceBox, character, "exp");
-        SetText(CurrentHpBox, character, "cur_hp");
-        SetText(MaximumHpBox, character, "max_hp");
-        SetText(CurrentMpBox, character, "cur_mp");
-        SetText(MaximumMpBox, character, "max_mp");
-        SetText(StrengthBox, character, "strength");
-        SetText(SpeedBox, character, "speed");
-        SetText(MagicBox, character, "magic");
-        SetText(SpiritBox, character, "spirit");
-        SetEquipment(WeaponBox, character, "weapon");
-        SetEquipment(HeadBox, character, "head");
-        SetEquipment(ArmBox, character, "arm");
-        SetEquipment(ArmorBox, character, "armor");
-        SetEquipment(AccessoryBox, character, "accessory");
-        _viewModel.LoadAbilities(character);
+        if (rows.Count == 0) panel.Children.Add(Label("No inventory entries."));
+        panel.Children.Add(Button("Apply inventory", () => workspace.ApplyInventory(
+            rows.Select(row => new InventoryRowDraft(row.SlotIndex, row.Token.Text ?? string.Empty,
+                ParseWholeNumber(row.Quantity.Text))).ToArray())));
+
+        ComboBox addKnown = new() { ItemsSource = GameData.ItemNames, PlaceholderText = "Pick an item or gear…" };
+        TextBox addItem = Input(string.Empty, "Name, decimal ID, or 0xID");
+        addKnown.SelectionChanged += (_, _) => { if (addKnown.SelectedItem is string name) addItem.Text = name; };
+        Control addQuantity = Numeric(99, 1, 99, "Inventory add-item quantity", out TextBox addQuantityBox);
+        panel.Children.Add(Label("Add item / gear"));
+        panel.Children.Add(addKnown);
+        panel.Children.Add(Row(addItem, addQuantity, Button("Add", () => workspace.AddItem(addItem.Text ?? string.Empty,
+            ParseWholeNumber(addQuantityBox.Text)))));
+        return Scroll(panel);
     }
 
-    private void ApplyCharacter(object? sender, RoutedEventArgs e)
+    private Control BuildCards()
     {
-        if (_viewModel.SelectedCharacter is null) { Error("Select a character first."); return; }
-        var index = _viewModel.SelectedCharacter.Index;
-        EditSlot(candidate =>
+        StackPanel panel = Panel();
+        if (workspace.CurrentSlot is not { } slot)
         {
-            var character = candidate.Character(index);
-            character.Name = NameBox.Text ?? string.Empty;
-            ApplyNumber(character, "level", LevelBox);
-            ApplyNumber(character, "exp", ExperienceBox);
-            ApplyNumber(character, "cur_hp", CurrentHpBox);
-            ApplyNumber(character, "max_hp", MaximumHpBox);
-            ApplyNumber(character, "cur_mp", CurrentMpBox);
-            ApplyNumber(character, "max_mp", MaximumMpBox);
-            ApplyNumber(character, "strength", StrengthBox);
-            ApplyNumber(character, "speed", SpeedBox);
-            ApplyNumber(character, "magic", MagicBox);
-            ApplyNumber(character, "spirit", SpiritBox);
-            ApplyEquipment(character, "weapon", WeaponBox);
-            ApplyEquipment(character, "head", HeadBox);
-            ApplyEquipment(character, "arm", ArmBox);
-            ApplyEquipment(character, "armor", ArmorBox);
-            ApplyEquipment(character, "accessory", AccessoryBox);
-        }, $"Updated character row {index}.", index);
-    }
-
-    private void ApplyAbilities(object? sender, RoutedEventArgs e)
-    {
-        if (_viewModel.SelectedCharacter is null) { Error("Select a character first."); return; }
-        var index = _viewModel.SelectedCharacter.Index;
-        EditSlot(candidate =>
-        {
-            var character = candidate.Character(index);
-            if (character.Format != SaveFormat.Legacy)
-                throw new InvalidOperationException("Support-ability editing is only available for PS1 saves.");
-            foreach (var ability in _viewModel.Abilities)
-                character.SetSupportAbility(ability.Index, ability.IsEnabled);
-        }, $"Updated support abilities for character row {index}.", index);
-    }
-
-    private void SetGil(object? sender, RoutedEventArgs e) => EditSlot(candidate =>
-    {
-        candidate.Gil = ParseNumber(GilBox, "gil", SaveLayout.MaximumGil);
-    }, "Updated gil.");
-
-    private void MaxSelected(object? sender, RoutedEventArgs e)
-    {
-        if (_viewModel.SelectedCharacter is null) { Error("Select a character first."); return; }
-        var index = _viewModel.SelectedCharacter.Index;
-        EditSlot(candidate => candidate.Character(index).MaxOut(), $"Maxed character row {index}.", index);
-    }
-
-    private void MaxAll(object? sender, RoutedEventArgs e) => EditSlot(candidate =>
-    {
-        foreach (var character in candidate.Characters().Where(x => x.IsRecruited)) character.MaxOut();
-    }, "Maxed every recruited character.");
-
-    private void GiveAllItems(object? sender, RoutedEventArgs e) => EditSlot(candidate =>
-    {
-        var added = SaveDocument.GiveAllItems(candidate, Quantity);
-        if (added == 0) throw new InvalidOperationException("No item entries could be added; the inventory may be full.");
-    }, $"Added all known items and gear at quantity {Quantity} where space allowed.");
-
-    private void AddItem(object? sender, RoutedEventArgs e)
-    {
-        var token = ItemBox.Text?.Trim();
-        if (string.IsNullOrEmpty(token)) { Error("Enter or pick an item/gear name first."); return; }
-        EditSlot(candidate =>
-        {
-            var itemId = GameData.ResolveItemId(token);
-            if (!candidate.SetItem(itemId, Quantity)) throw new InvalidOperationException("Inventory is full.");
-        }, $"Added {token} at quantity {Quantity}.");
-    }
-
-    private void KnownItemSelected(object? sender, SelectionChangedEventArgs e)
-    {
-        if (KnownItemCombo.SelectedItem is string selected) ItemBox.Text = selected;
-    }
-
-    private async void BrowseOutput(object? sender, RoutedEventArgs e)
-    {
-        var file = await StorageProvider.SaveFilePickerAsync(new()
-        {
-            Title = "Write edited FFIX save",
-            SuggestedFileName = _savePath is null ? "save.edited.dat" : Path.GetFileName(DefaultOutput(_savePath)),
-            FileTypeChoices = [FilePickerFileTypes.All],
-        });
-        if (file is not null) OutputBox.Text = file.Path.LocalPath;
-    }
-
-    private void WriteNew(object? sender, RoutedEventArgs e)
-    {
-        if (_document is null || _savePath is null) { Error("Load a save before writing."); return; }
-        var output = string.IsNullOrWhiteSpace(OutputBox.Text) ? DefaultOutput(_savePath) : OutputBox.Text!.Trim();
-        try
-        {
-            SafeFileWriter.WriteNew(_savePath, output, _document);
-            _viewModel.AppendLog($"Wrote edited copy: {output}");
+            panel.Children.Add(Label("No Tetra Master cards."));
+            return Scroll(panel);
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+
+        (int wins, int losses, int draws) = slot.CardRecord;
+        TextBox winsBox = Input(wins.ToString(), "Wins");
+        TextBox lossesBox = Input(losses.ToString(), "Losses");
+        TextBox drawsBox = Input(draws.ToString(), "Draws");
+        panel.Children.Add(Label($"Record: {wins}W / {losses}L / {draws}D"));
+        panel.Children.Add(Row(Label("W"), winsBox, Label("L"), lossesBox, Label("D"), drawsBox,
+            Button("Apply record", () => ApplyCardRecord(winsBox.Text, lossesBox.Text, drawsBox.Text))));
+        panel.Children.Add(Button("Add maxed card", workspace.AddCard));
+
+        foreach (CardInfo card in slot.Cards())
         {
-            Error($"Write failed: {exception.Message}");
+            panel.Children.Add(Label(
+                $"{card.Index}: {card.TypeName} — {card.Attack:X2}{card.AttackTypeName}{card.PhysicalDefense:X2}{card.MagicDefense:X2}, arrows {card.Arrows:X2}"));
+            ComboBox type = new()
+            {
+                ItemsSource = GameData.CardTypeNames,
+                SelectedIndex = card.TypeId < GameData.CardTypeNames.Count ? card.TypeId : -1,
+                PlaceholderText = "Card type",
+            };
+            ComboBox attackClass = new()
+            {
+                ItemsSource = AttackTypeNames,
+                SelectedIndex = card.AttackType % 4,
+            };
+            Control attack = Numeric(card.Attack, 0, 255, $"Attack for card {card.Index}", out TextBox attackBox);
+            Control pdef = Numeric(card.PhysicalDefense, 0, 255, $"Physical defense for card {card.Index}", out TextBox pdefBox);
+            Control mdef = Numeric(card.MagicDefense, 0, 255, $"Magic defense for card {card.Index}", out TextBox mdefBox);
+            CheckBox[] arrows = new CheckBox[ArrowBits.Length];
+            StackPanel arrowRow = Row();
+            for (int bit = 0; bit < ArrowBits.Length; bit++)
+            {
+                CheckBox check = new()
+                {
+                    Content = ArrowLabels[bit],
+                    IsChecked = (card.Arrows & ArrowBits[bit]) != 0,
+                };
+                check.Click += (_, _) => workspace.SetPendingEdits(true);
+                arrows[bit] = check;
+                arrowRow.Children.Add(check);
+            }
+
+            int index = card.Index;
+            panel.Children.Add(type);
+            panel.Children.Add(Row(Label("Attack"), attack, Label("Class"), attackClass));
+            panel.Children.Add(Row(Label("P.Def"), pdef, Label("M.Def"), mdef));
+            panel.Children.Add(arrowRow);
+            panel.Children.Add(Row(
+                Button("All arrows", () =>
+                {
+                    foreach (CheckBox check in arrows) check.IsChecked = true;
+                    workspace.SetPendingEdits(true);
+                    return EditResult.Accepted("All arrows selected. Apply the card to write them.");
+                }),
+                Button("Apply card", () => workspace.ApplyCard(
+                    index,
+                    type.SelectedIndex,
+                    ReadArrows(arrows),
+                    ParseWholeNumber(attackBox.Text),
+                    attackClass.SelectedIndex,
+                    ParseWholeNumber(pdefBox.Text),
+                    ParseWholeNumber(mdefBox.Text))),
+                Button("Remove", () => workspace.RemoveCard(index))));
         }
+
+        if (slot.Cards().Count == 0)
+            panel.Children.Add(Label("No Tetra Master cards in this save."));
+        return Scroll(panel);
     }
 
-    private async void WriteInPlace(object? sender, RoutedEventArgs e)
+    private EditResult ApplyCardRecord(string? wins, string? losses, string? draws)
     {
-        if (_document is null || _savePath is null) { Error("Load a save before writing."); return; }
-        if (!await ConfirmDialog.Ask(this, $"Overwrite {_savePath}?\nA new numbered .bak backup will be written first.")) return;
-        try
+        if (!int.TryParse(wins, out int winValue) || !int.TryParse(losses, out int lossValue) ||
+            !int.TryParse(draws, out int drawValue))
+            return EditResult.Rejected("Card record values must be whole numbers from 0 to 65,535.");
+        return workspace.SetCardRecord(winValue, lossValue, drawValue);
+    }
+
+    private Control Numeric(int value, int minimum, int maximum, string name, out TextBox box)
+    {
+        box = new TextBox
         {
-            var backup = SafeFileWriter.WriteInPlaceWithBackup(_savePath, _document);
-            _viewModel.AppendLog($"Wrote in place; backup: {backup}");
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-        {
-            Error($"In-place write failed: {exception.Message}");
-        }
+            Text = value.ToString(),
+            Width = 72,
+            MinWidth = 64,
+            PlaceholderText = name,
+        };
+        bool editing = false;
+        box.GotFocus += (_, _) => editing = true;
+        box.TextChanged += (_, _) => { if (editing) workspace.SetPendingEdits(true); };
+        AutomationProperties.SetName(box, name);
+
+        Button down = new() { Content = "−", Width = 32, Padding = new Thickness(0) };
+        Button up = new() { Content = "+", Width = 32, Padding = new Thickness(0) };
+        AutomationProperties.SetName(down, $"Decrease {name}");
+        AutomationProperties.SetName(up, $"Increase {name}");
+        TextBox target = box;
+        down.Click += (_, _) => AdjustNumeric(target, minimum, maximum, -1);
+        up.Click += (_, _) => AdjustNumeric(target, minimum, maximum, 1);
+        return Row(box, down, up);
     }
 
-    private void EditSlot(Action<IEditableSlot> operation, string message, int? selectedCharacter = null)
+    private void AdjustNumeric(TextBox box, int minimum, int maximum, int delta)
     {
-        if (_document is null || _slot is null || _viewModel.SelectedSlot is null)
-        {
-            Error("Load a save and select a slot before editing.");
-            return;
-        }
-        try
-        {
-            var candidate = _slot.Clone();
-            operation(candidate);
-            _document.CommitSlot(_viewModel.SelectedSlot.Reference, candidate);
-            LoadSelectedSlot(selectedCharacter);
-            _viewModel.AppendLog(message + " The edited slot was finalized and reloaded successfully.");
-        }
-        catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or SaveFormatException or OverflowException)
-        {
-            Error($"Edit failed; no partial edit was applied: {exception.Message}");
-        }
+        int current = int.TryParse(box.Text, out int parsed) ? parsed : minimum;
+        box.Text = Math.Clamp(current + delta, minimum, maximum).ToString();
+        workspace.SetPendingEdits(true);
     }
 
-    private static void ApplyNumber(IEditableCharacter character, string requestedField, TextBox box)
+    private TextBox Input(string text, string watermark)
     {
-        var field = ActualField(character, requestedField);
-        if (field is null) return;
-        character.Set(field, ParseNumber(box, requestedField, character.MaximumFor(field)));
+        TextBox box = new() { Text = text, PlaceholderText = watermark, MinWidth = 180 };
+        bool editing = false;
+        box.GotFocus += (_, _) => editing = true;
+        box.TextChanged += (_, _) => { if (editing) workspace.SetPendingEdits(true); };
+        return box;
     }
 
-    private static void ApplyEquipment(IEditableCharacter character, string field, TextBox box)
+    private Button Button(string caption, Func<EditResult> action)
     {
-        if (!character.Has(field) || string.IsNullOrWhiteSpace(box.Text)) return;
-        character.Set(field, GameData.ResolveItemId(box.Text));
+        Button button = new() { Content = caption };
+        AutomationProperties.SetName(button, caption);
+        button.Click += (_, _) => viewModel.StatusMessage = action().Message;
+        return button;
     }
 
-    private static int ParseNumber(TextBox box, string label, int maximum)
+    private static StackPanel Panel() => new() { Margin = new Thickness(16), Spacing = 9 };
+    private static ScrollViewer Scroll(Control control) => new() { Content = control };
+    private static TextBlock Label(string text) => new() { Text = text, VerticalAlignment = VerticalAlignment.Center, TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private static StackPanel Row(params Control[] controls)
     {
-        if (!int.TryParse(box.Text, out var value) || value < 0 || value > maximum)
-            throw new ArgumentException($"{label} must be a whole number from 0 to {maximum:N0}.");
-        return value;
+        StackPanel row = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
+        foreach (Control control in controls) row.Children.Add(control);
+        return row;
     }
-
-    private static string? ActualField(IEditableCharacter character, string requested)
+    private static string ToTitle(string value) => char.ToUpperInvariant(value[0]) + value[1..];
+    private static int ParseWholeNumber(string? text) => int.TryParse(text, out int value) ? value : int.MinValue;
+    private static byte ReadArrows(CheckBox[] checks)
     {
-        if (character.Has(requested)) return requested;
-        var basis = requested + "_base";
-        return character.Has(basis) ? basis : null;
+        byte arrows = 0;
+        for (int index = 0; index < ArrowBits.Length; index++)
+            if (checks[index].IsChecked == true) arrows |= ArrowBits[index];
+        return arrows;
     }
 
-    private static void SetText(TextBox box, IEditableCharacter character, string requested)
-    {
-        var field = ActualField(character, requested);
-        box.Text = field is null ? string.Empty : character.Get(field).ToString();
-        box.IsEnabled = field is not null;
-    }
+    private static readonly (string Field, string Label)[] CharacterFields =
+    [
+        ("level", "Level"), ("exp", "Experience"), ("cur_hp", "Current HP"),
+        ("max_hp", "Maximum HP"), ("cur_mp", "Current MP"), ("max_mp", "Maximum MP"),
+        ("strength", "Strength"), ("speed", "Speed"), ("magic", "Magic"), ("spirit", "Spirit"),
+    ];
 
-    private static void SetEquipment(TextBox box, IEditableCharacter character, string field)
-    {
-        box.Text = character.Has(field) ? character.Get(field).ToString() : string.Empty;
-        box.IsEnabled = character.Has(field);
-    }
-
-    private int Quantity => (int)(QuantityBox.Value ?? 99);
-    private void Error(string message) => _viewModel.AppendLog("ERROR: " + message);
-    private static string DefaultOutput(string path) => Path.Combine(Path.GetDirectoryName(path)!,
-        Path.GetFileNameWithoutExtension(path) + ".edited" + Path.GetExtension(path));
+    private static readonly string[] AttackTypeNames = ["P", "M", "X", "A"];
+    private static readonly string[] ArrowLabels = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+    private static readonly byte[] ArrowBits = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80];
 }

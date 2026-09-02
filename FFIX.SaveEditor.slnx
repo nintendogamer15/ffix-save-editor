@@ -2,5 +2,7 @@
   <Project Path="src/FFIX.SaveEditor.Core/FFIX.SaveEditor.Core.csproj" />
   <Project Path="src/FFIX.SaveEditor.Cli/FFIX.SaveEditor.Cli.csproj" />
   <Project Path="src/FFIX.SaveEditor.Gui/FFIX.SaveEditor.Gui.csproj" />
+  <Project Path="external/save-editor-gui-framework/src/SaveEditor.Ui/SaveEditor.Ui.csproj" />
   <Project Path="tests/FFIX.SaveEditor.Tests/FFIX.SaveEditor.Tests.csproj" />
+  <Project Path="tests/FFIX.SaveEditor.Gui.Tests/FFIX.SaveEditor.Gui.Tests.csproj" />
 </Solution>
