@@ -102,6 +102,64 @@ public sealed class HeadlessShellTests
         }
     }
 
+    [AvaloniaFact]
+    public async Task InventoryAndOverviewUseSearchableItemPickers()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "ffix-headless-items-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        string save = Path.Combine(root, "save.ps1");
+        byte[] block = OccupiedLegacyBlock();
+        BinarySlot slot = new(block, SaveFormat.Legacy);
+        Assert.True(slot.SetItem(GameData.ResolveItemId("Potion"), 7));
+        LegacyChecksum.Repair(block);
+        await File.WriteAllBytesAsync(save, block);
+
+        MainWindow window = new(save, new EditorSettingsStoreOptions { BaseDirectory = Path.Combine(root, "settings") });
+        try
+        {
+            await window.InitializeAsync();
+            IReadOnlyList<InventoryItem> items = window.Workspace.CurrentSlot!.Items();
+            Assert.NotEmpty(items);
+
+            Control inventory = (Control)window.ViewModel.Sections.Single(section => section.Key == "inventory").Body!;
+            List<AutoCompleteBox> inventoryPickers = Walk(inventory).OfType<AutoCompleteBox>().ToList();
+            Assert.Equal(items.Count + 1, inventoryPickers.Count);
+            for (int index = 0; index < items.Count; index++)
+            {
+                AutoCompleteBox picker = inventoryPickers[index];
+                Assert.Equal(items[index].Name, picker.Text);
+                Assert.Same(GameData.ItemNames, picker.ItemsSource);
+                Assert.Equal(AutoCompleteFilterMode.Contains, picker.FilterMode);
+                Assert.Equal(0, picker.MinimumPrefixLength);
+                Assert.False(picker.IsTextCompletionEnabled);
+            }
+            AutoCompleteBox addPicker = inventoryPickers[^1];
+            Assert.True(string.IsNullOrEmpty(addPicker.Text));
+            Assert.Same(GameData.ItemNames, addPicker.ItemsSource);
+            Assert.Equal(AutoCompleteFilterMode.Contains, addPicker.FilterMode);
+            Assert.Equal(0, addPicker.MinimumPrefixLength);
+            Assert.False(addPicker.IsTextCompletionEnabled);
+            Assert.DoesNotContain(Walk(inventory).OfType<ComboBox>(), box => box.PlaceholderText == "Pick an item or gear…");
+            Assert.Contains(Walk(inventory).OfType<TextBox>(), box => box.Text == "7");
+
+            Control overview = (Control)window.ViewModel.Sections.Single(section => section.Key == "overview").Body!;
+            AutoCompleteBox overviewAdd = Assert.Single(Walk(overview).OfType<AutoCompleteBox>());
+            Assert.Same(GameData.ItemNames, overviewAdd.ItemsSource);
+            Assert.Equal(AutoCompleteFilterMode.Contains, overviewAdd.FilterMode);
+            Assert.Equal(0, overviewAdd.MinimumPrefixLength);
+            Assert.False(overviewAdd.IsTextCompletionEnabled);
+            Assert.DoesNotContain(Walk(overview).OfType<ComboBox>(), box => box.PlaceholderText == "Pick an item or gear…");
+            Assert.Contains(Walk(overview).OfType<ComboBox>(), box => box.PlaceholderText == "Open a save to select an occupied slot");
+            Assert.DoesNotContain(Walk(overview).OfType<ComboBox>(), box => ReferenceEquals(box.ItemsSource, GameData.ItemNames));
+        }
+        finally
+        {
+            window.Close();
+            window.Dispose();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static byte[] OccupiedLegacyBlock()
     {
         byte[] block = new byte[SaveLayout.LegacyBlockSize];

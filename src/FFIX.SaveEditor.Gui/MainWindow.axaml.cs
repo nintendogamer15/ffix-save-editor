@@ -173,12 +173,9 @@ public sealed partial class MainWindow : Window, IDisposable
             Button("Max all recruited characters", workspace.MaxAll),
             Button("Give all items and gear", () => workspace.GiveAllItems(99))));
 
-        ComboBox known = new() { ItemsSource = GameData.ItemNames, PlaceholderText = "Pick an item or gear…" };
-        TextBox item = Input(string.Empty, "Name, decimal ID, or 0xID");
-        known.SelectionChanged += (_, _) => { if (known.SelectedItem is string name) item.Text = name; };
+        AutoCompleteBox item = ItemPicker(string.Empty, "Add item or gear");
         Control quantity = Numeric(99, 1, 99, "Add-item quantity", out TextBox quantityBox);
         panel.Children.Add(Label("Add item / gear"));
-        panel.Children.Add(known);
         panel.Children.Add(Row(item, quantity, Button("Add", () => workspace.AddItem(item.Text ?? string.Empty, ParseWholeNumber(quantityBox.Text)))));
         return Scroll(panel);
     }
@@ -265,18 +262,13 @@ public sealed partial class MainWindow : Window, IDisposable
     private Control BuildInventory()
     {
         StackPanel panel = Panel();
-        List<(int SlotIndex, TextBox Token, TextBox Quantity)> rows = [];
+        List<(int SlotIndex, AutoCompleteBox Token, TextBox Quantity)> rows = [];
         foreach (InventoryItem item in workspace.CurrentSlot?.Items() ?? [])
         {
-            ComboBox known = new() { ItemsSource = GameData.ItemNames, PlaceholderText = "Pick an item or gear…" };
-            TextBox token = Input(item.Name, "Name, decimal ID, or 0xID");
-            if ((uint)item.ItemId < GameData.ItemNames.Count)
-                known.SelectedIndex = item.ItemId;
-            known.SelectionChanged += (_, _) => { if (known.SelectedItem is string name) token.Text = name; };
+            AutoCompleteBox token = ItemPicker(item.Name, $"Item for slot {item.SlotIndex}");
             Control quantity = Numeric(item.Quantity, 0, 99, $"Quantity for slot {item.SlotIndex}", out TextBox quantityBox);
             int slotIndex = item.SlotIndex;
             panel.Children.Add(Label($"{slotIndex}: {item.Name} — {item.Quantity}"));
-            panel.Children.Add(known);
             panel.Children.Add(Row(token, quantity, Button("Remove", () => workspace.ApplyInventory(
                 [new InventoryRowDraft(slotIndex, token.Text ?? string.Empty, 0)]))));
             rows.Add((slotIndex, token, quantityBox));
@@ -286,12 +278,9 @@ public sealed partial class MainWindow : Window, IDisposable
             rows.Select(row => new InventoryRowDraft(row.SlotIndex, row.Token.Text ?? string.Empty,
                 ParseWholeNumber(row.Quantity.Text))).ToArray())));
 
-        ComboBox addKnown = new() { ItemsSource = GameData.ItemNames, PlaceholderText = "Pick an item or gear…" };
-        TextBox addItem = Input(string.Empty, "Name, decimal ID, or 0xID");
-        addKnown.SelectionChanged += (_, _) => { if (addKnown.SelectedItem is string name) addItem.Text = name; };
+        AutoCompleteBox addItem = ItemPicker(string.Empty, "Inventory add item or gear");
         Control addQuantity = Numeric(99, 1, 99, "Inventory add-item quantity", out TextBox addQuantityBox);
         panel.Children.Add(Label("Add item / gear"));
-        panel.Children.Add(addKnown);
         panel.Children.Add(Row(addItem, addQuantity, Button("Add", () => workspace.AddItem(addItem.Text ?? string.Empty,
             ParseWholeNumber(addQuantityBox.Text)))));
         return Scroll(panel);
@@ -412,6 +401,26 @@ public sealed partial class MainWindow : Window, IDisposable
         int current = int.TryParse(box.Text, out int parsed) ? parsed : minimum;
         box.Text = Math.Clamp(current + delta, minimum, maximum).ToString();
         workspace.SetPendingEdits(true);
+    }
+
+    private AutoCompleteBox ItemPicker(string text, string name)
+    {
+        AutoCompleteBox box = new()
+        {
+            ItemsSource = GameData.ItemNames,
+            Text = text,
+            FilterMode = AutoCompleteFilterMode.Contains,
+            MinimumPrefixLength = 0,
+            IsTextCompletionEnabled = false,
+            PlaceholderText = "Search name, or enter decimal/0x ID",
+            MinWidth = 180,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        AutomationProperties.SetName(box, name);
+        bool editing = false;
+        box.GotFocus += (_, _) => editing = true;
+        box.TextChanged += (_, _) => { if (editing) workspace.SetPendingEdits(true); };
+        return box;
     }
 
     private TextBox Input(string text, string watermark)

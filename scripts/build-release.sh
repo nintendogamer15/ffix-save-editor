@@ -40,13 +40,8 @@ find "${stage_dir}/windows" "${stage_dir}/linux" -type f -name '*.pdb' -delete
 
 windows_asset="${output_dir}/FFIXSaveEditor-${safe_label}-windows-x64.exe"
 linux_asset="${output_dir}/FFIXSaveEditor-${safe_label}-linux-x64"
-license_asset="${output_dir}/FFIXSaveEditor-${safe_label}-third-party-licenses.tar.gz"
 
 install -m 0644 "${stage_dir}/windows/FFIXSaveEditor.exe" "${windows_asset}"
 install -m 0755 "${stage_dir}/linux/FFIXSaveEditor" "${linux_asset}"
-mkdir -p "${stage_dir}/licenses/LICENSES"
-install -m 0644 LICENSE NOTICES.md "${stage_dir}/licenses/"
-install -m 0644 LICENSES/*.txt "${stage_dir}/licenses/LICENSES/"
-tar -C "${stage_dir}/licenses" -czf "${license_asset}" LICENSE NOTICES.md LICENSES
 
-printf '%s\n' "${windows_asset}" "${linux_asset}" "${license_asset}"
+printf '%s\n' "${windows_asset}" "${linux_asset}"

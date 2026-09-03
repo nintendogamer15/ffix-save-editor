@@ -1,6 +1,6 @@
 # FFIX Save Editor
 
-A cross-platform save editor for Final Fantasy IX. Version 0.3.4 is implemented in C# on .NET 10, with an Avalonia desktop interface, a batch CLI, and an interactive terminal mode.
+A cross-platform save editor for Final Fantasy IX, implemented in C# on .NET 10, with an Avalonia desktop interface, a batch CLI, and an interactive terminal mode.
 
 ## Supported saves
 

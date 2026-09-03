@@ -101,9 +101,7 @@ decoded or exposed for editing.
 Dependencies are restored from NuGet and are not vendored. Standard .NET
 RID-specific publishing creates the Windows and Linux releases.
 
-The standalone release includes a third-party licence bundle containing these
-checked-in texts. The same texts are embedded in the GUI and available through
-Help > About.
+The same texts are embedded in the GUI and available through Help > About.
 
 ## License of this project
 
